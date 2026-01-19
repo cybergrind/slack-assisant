@@ -1,4 +1,4 @@
-"""Slack API client wrapper."""
+"""Slack API client wrapper with rate limiting."""
 
 import logging
 from typing import Any
@@ -6,23 +6,72 @@ from typing import Any
 from slack_sdk.errors import SlackApiError
 from slack_sdk.web.async_client import AsyncWebClient
 
+from slack_assistant.slack.rate_limiter import SLACK_RATE_LIMITS, RateLimitConfig, RateLimiter
+
 
 logger = logging.getLogger(__name__)
 
 
 class SlackClient:
-    """Async Slack API client wrapper."""
+    """Async Slack API client wrapper with rate limiting.
 
-    def __init__(self, token: str):
+    All API methods are rate-limited using method-specific configurations
+    based on Slack's tier system.
+    """
+
+    def __init__(self, token: str, rate_limit_enabled: bool = True):
+        """Initialize Slack client.
+
+        Args:
+            token: Slack user OAuth token (xoxp-...).
+            rate_limit_enabled: Whether to enable rate limiting.
+        """
         self.client = AsyncWebClient(token=token)
         self.user_id: str | None = None
         self.user_name: str | None = None
         self.team_id: str | None = None
 
+        self._rate_limit_enabled = rate_limit_enabled
+        self._rate_limiters: dict[str, RateLimiter] = {}
+
+    def _get_rate_limiter(self, method_name: str) -> RateLimiter:
+        """Get or create a rate limiter for a Slack API method.
+
+        Args:
+            method_name: Slack API method name.
+
+        Returns:
+            RateLimiter configured for the method.
+        """
+        if method_name not in self._rate_limiters:
+            config = SLACK_RATE_LIMITS.get(method_name, RateLimitConfig())
+            self._rate_limiters[method_name] = RateLimiter(config)
+        return self._rate_limiters[method_name]
+
+    async def _execute(self, method_name: str, func, *args, **kwargs):
+        """Execute an API call with optional rate limiting.
+
+        Args:
+            method_name: Slack API method name for rate limit config.
+            func: Async function to execute.
+            *args: Positional arguments.
+            **kwargs: Keyword arguments.
+
+        Returns:
+            Result of the API call.
+        """
+        if self._rate_limit_enabled:
+            limiter = self._get_rate_limiter(method_name)
+            return await limiter.execute(func, *args, **kwargs)
+        return await func(*args, **kwargs)
+
     async def authenticate(self) -> bool:
         """Verify token and get current user info."""
         try:
-            response = await self.client.auth_test()
+            response = await self._execute(
+                'auth.test',
+                self.client.auth_test,
+            )
             self.user_id = response['user_id']
             self.user_name = response['user']
             self.team_id = response['team_id']
@@ -39,7 +88,9 @@ class SlackClient:
 
         try:
             while True:
-                response = await self.client.conversations_list(
+                response = await self._execute(
+                    'conversations.list',
+                    self.client.conversations_list,
                     types=types,
                     exclude_archived=True,
                     limit=200,
@@ -82,7 +133,11 @@ class SlackClient:
                 if cursor:
                     kwargs['cursor'] = cursor
 
-                response = await self.client.conversations_history(**kwargs)
+                response = await self._execute(
+                    'conversations.history',
+                    self.client.conversations_history,
+                    **kwargs,
+                )
                 messages.extend(response.get('messages', []))
 
                 if len(messages) >= limit:
@@ -108,7 +163,9 @@ class SlackClient:
     ) -> list[dict[str, Any]]:
         """Fetch replies in a thread."""
         try:
-            response = await self.client.conversations_replies(
+            response = await self._execute(
+                'conversations.replies',
+                self.client.conversations_replies,
                 channel=channel_id,
                 ts=thread_ts,
                 limit=limit,
@@ -123,7 +180,11 @@ class SlackClient:
     async def get_user_info(self, user_id: str) -> dict[str, Any] | None:
         """Get user information."""
         try:
-            response = await self.client.users_info(user=user_id)
+            response = await self._execute(
+                'users.info',
+                self.client.users_info,
+                user=user_id,
+            )
             return response.get('user')
         except SlackApiError as e:
             logger.warning(f'Failed to get user {user_id}: {e.response["error"]}')
@@ -132,7 +193,10 @@ class SlackClient:
     async def get_reminders(self) -> list[dict[str, Any]]:
         """Get all reminders for the authenticated user."""
         try:
-            response = await self.client.reminders_list()
+            response = await self._execute(
+                'reminders.list',
+                self.client.reminders_list,
+            )
             return response.get('reminders', [])
         except SlackApiError as e:
             logger.warning(f'Failed to fetch reminders: {e.response["error"]}')
@@ -141,7 +205,9 @@ class SlackClient:
     async def search_messages(self, query: str, count: int = 20) -> list[dict[str, Any]]:
         """Search messages (requires search:read scope)."""
         try:
-            response = await self.client.search_messages(
+            response = await self._execute(
+                'search.messages',
+                self.client.search_messages,
                 query=query,
                 count=count,
                 sort='timestamp',

@@ -98,13 +98,14 @@ class SlackPoller:
         return 'public_channel'
 
     async def _sync_all_messages(self) -> None:
-        """Sync messages from all channels."""
+        """Sync messages from all channels.
+
+        Rate limiting is handled by the SlackClient, so no manual delays needed.
+        """
         channels = await self.repository.get_all_channels()
 
         for channel in channels:
             await self._sync_channel_messages(channel)
-            # Small delay to avoid rate limits
-            await asyncio.sleep(0.2)
 
     async def _sync_channel_messages(self, channel: Channel) -> None:
         """Sync messages from a single channel."""

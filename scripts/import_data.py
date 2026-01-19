@@ -116,9 +116,7 @@ async def _insert_batch(session, model: type, batch: list, metadata_col) -> None
 
         # Build update set (all non-pk columns)
         update_cols = {
-            col.name: getattr(stmt.excluded, col.name)
-            for col in model.__table__.columns
-            if col.name not in pk_cols
+            col.name: getattr(stmt.excluded, col.name) for col in model.__table__.columns if col.name not in pk_cols
         }
 
         # Add metadata to update if present
@@ -146,7 +144,7 @@ async def main():
     if metadata_file.exists():
         with open(metadata_file) as f:  # noqa: ASYNC230
             metadata = json.load(f)
-        logger.info(f"Importing from backup created at: {metadata.get('exported_at', 'unknown')}")
+        logger.info(f'Importing from backup created at: {metadata.get("exported_at", "unknown")}')
 
     # Initialize database
     await init_db()

@@ -25,6 +25,17 @@ class Config:
     # Embeddings (for future use)
     embedding_model: str = field(default_factory=lambda: os.environ.get('EMBEDDING_MODEL', 'text-embedding-ada-002'))
 
+    # Rate Limiting
+    rate_limit_enabled: bool = field(
+        default_factory=lambda: os.environ.get('RATE_LIMIT_ENABLED', 'true').lower() in ('true', '1', 'yes')
+    )
+    rate_limit_max_concurrent: int = field(
+        default_factory=lambda: int(os.environ.get('RATE_LIMIT_MAX_CONCURRENT', '5'))
+    )
+    rate_limit_retry_attempts: int = field(
+        default_factory=lambda: int(os.environ.get('RATE_LIMIT_RETRY_ATTEMPTS', '3'))
+    )
+
     def validate(self) -> list[str]:
         """Validate configuration and return list of errors."""
         errors = []

@@ -20,13 +20,17 @@ class Repository:
         async with get_session() as session:
             # Use __table__.c to reference columns to avoid metadata conflict
             metadata_col = Channel.__table__.c.metadata
-            stmt = insert(Channel).values(
-                id=channel.id,
-                name=channel.name,
-                channel_type=channel.channel_type,
-                is_archived=channel.is_archived,
-                created_at=channel.created_at,
-            ).values({metadata_col: channel.metadata_})
+            stmt = (
+                insert(Channel)
+                .values(
+                    id=channel.id,
+                    name=channel.name,
+                    channel_type=channel.channel_type,
+                    is_archived=channel.is_archived,
+                    created_at=channel.created_at,
+                )
+                .values({metadata_col: channel.metadata_})
+            )
             stmt = stmt.on_conflict_do_update(
                 index_elements=['id'],
                 set_={
@@ -57,13 +61,17 @@ class Repository:
         """Insert or update a user."""
         async with get_session() as session:
             metadata_col = User.__table__.c.metadata
-            stmt = insert(User).values(
-                id=user.id,
-                name=user.name,
-                real_name=user.real_name,
-                display_name=user.display_name,
-                is_bot=user.is_bot,
-            ).values({metadata_col: user.metadata_})
+            stmt = (
+                insert(User)
+                .values(
+                    id=user.id,
+                    name=user.name,
+                    real_name=user.real_name,
+                    display_name=user.display_name,
+                    is_bot=user.is_bot,
+                )
+                .values({metadata_col: user.metadata_})
+            )
             stmt = stmt.on_conflict_do_update(
                 index_elements=['id'],
                 set_={
@@ -89,17 +97,21 @@ class Repository:
         """Insert or update a message, returning the database ID."""
         async with get_session() as session:
             metadata_col = Message.__table__.c.metadata
-            stmt = insert(Message).values(
-                channel_id=message.channel_id,
-                ts=message.ts,
-                user_id=message.user_id,
-                text=message.text,
-                thread_ts=message.thread_ts,
-                reply_count=message.reply_count,
-                is_edited=message.is_edited,
-                message_type=message.message_type,
-                created_at=message.created_at,
-            ).values({metadata_col: message.metadata_})
+            stmt = (
+                insert(Message)
+                .values(
+                    channel_id=message.channel_id,
+                    ts=message.ts,
+                    user_id=message.user_id,
+                    text=message.text,
+                    thread_ts=message.thread_ts,
+                    reply_count=message.reply_count,
+                    is_edited=message.is_edited,
+                    message_type=message.message_type,
+                    created_at=message.created_at,
+                )
+                .values({metadata_col: message.metadata_})
+            )
             stmt = stmt.on_conflict_do_update(
                 index_elements=['channel_id', 'ts'],
                 set_={
@@ -220,14 +232,18 @@ class Repository:
         """Insert or update a reminder."""
         async with get_session() as session:
             metadata_col = Reminder.__table__.c.metadata
-            stmt = insert(Reminder).values(
-                id=reminder.id,
-                user_id=reminder.user_id,
-                text=reminder.text,
-                time=reminder.time,
-                complete_ts=reminder.complete_ts,
-                recurring=reminder.recurring,
-            ).values({metadata_col: reminder.metadata_})
+            stmt = (
+                insert(Reminder)
+                .values(
+                    id=reminder.id,
+                    user_id=reminder.user_id,
+                    text=reminder.text,
+                    time=reminder.time,
+                    complete_ts=reminder.complete_ts,
+                    recurring=reminder.recurring,
+                )
+                .values({metadata_col: reminder.metadata_})
+            )
             stmt = stmt.on_conflict_do_update(
                 index_elements=['id'],
                 set_={
