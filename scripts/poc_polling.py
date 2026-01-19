@@ -145,12 +145,7 @@ class SlackPoller:
             response = await self.client.users_info(user=user_id)
             user = response.get('user', {})
             # Prefer display_name, fall back to real_name, then name
-            name = (
-                user.get('profile', {}).get('display_name')
-                or user.get('real_name')
-                or user.get('name')
-                or user_id
-            )
+            name = user.get('profile', {}).get('display_name') or user.get('real_name') or user.get('name') or user_id
             self.users_cache[user_id] = name
             return name
         except SlackApiError as e:

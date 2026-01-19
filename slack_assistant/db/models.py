@@ -1,56 +1,85 @@
-"""Database models for Slack Assistant.
+"""SQLAlchemy ORM models for Slack Assistant."""
 
-These are dataclasses representing database rows, not ORM models.
-We use raw asyncpg for better async performance.
-"""
-
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, func, text as sa_text
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-@dataclass
-class Channel:
+
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+
+
+class Channel(Base):
     """Slack channel/conversation."""
 
-    id: str
-    name: str | None
-    channel_type: str  # public_channel, private_channel, mpim, im
-    is_archived: bool = False
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    __tablename__ = 'channels'
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    channel_type: Mapped[str] = mapped_column(String(20), nullable=False)  # public_channel, private_channel, mpim, im
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    metadata_: Mapped[dict] = mapped_column('metadata', JSONB, default=dict)
+
+    messages: Mapped[list['Message']] = relationship(back_populates='channel')
+    sync_state: Mapped['SyncState | None'] = relationship(back_populates='channel', uselist=False)
 
 
-@dataclass
-class User:
+class User(Base):
     """Slack user cache."""
 
-    id: str
-    name: str | None = None
-    real_name: str | None = None
-    display_name: str | None = None
-    is_bot: bool = False
-    updated_at: datetime | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    __tablename__ = 'users'
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    real_name: Mapped[str | None] = mapped_column(String(255))
+    display_name: Mapped[str | None] = mapped_column(String(255))
+    is_bot: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    metadata_: Mapped[dict] = mapped_column('metadata', JSONB, default=dict)
 
 
-@dataclass
-class Message:
+class Message(Base):
     """Slack message."""
 
-    id: int | None  # Database ID, None for new messages
-    channel_id: str
-    ts: str  # Slack timestamp
-    user_id: str | None = None
-    text: str | None = None
-    thread_ts: str | None = None
-    reply_count: int = 0
-    is_edited: bool = False
-    message_type: str = 'message'
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    __tablename__ = 'messages'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String(20), ForeignKey('channels.id'), nullable=False)
+    ts: Mapped[str] = mapped_column(String(20), nullable=False)  # Slack timestamp
+    user_id: Mapped[str | None] = mapped_column(String(20))
+    text: Mapped[str | None] = mapped_column(Text)
+    thread_ts: Mapped[str | None] = mapped_column(String(20))  # Parent message ts if this is a reply
+    reply_count: Mapped[int] = mapped_column(Integer, default=0)
+    is_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    message_type: Mapped[str] = mapped_column(String(50), default='message')
+    created_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    metadata_: Mapped[dict] = mapped_column('metadata', JSONB, default=dict)
+
+    __table_args__ = (
+        Index('idx_messages_channel_ts', 'channel_id', 'ts', unique=True),
+        Index('idx_messages_thread', 'channel_id', 'thread_ts', postgresql_where=sa_text('thread_ts IS NOT NULL')),
+        Index('idx_messages_user', 'user_id'),
+        Index('idx_messages_created', 'created_at'),
+    )
+
+    channel: Mapped['Channel'] = relationship(back_populates='messages')
+    reactions: Mapped[list['Reaction']] = relationship(back_populates='message', cascade='all, delete-orphan')
+    embedding: Mapped['MessageEmbedding | None'] = relationship(
+        back_populates='message', uselist=False, cascade='all, delete-orphan'
+    )
 
     @property
     def is_thread_reply(self) -> bool:
@@ -74,7 +103,6 @@ class Message:
                 pass
 
         return cls(
-            id=None,
             channel_id=channel_id,
             ts=ts,
             user_id=msg.get('user'),
@@ -84,7 +112,7 @@ class Message:
             is_edited='edited' in msg,
             message_type=msg.get('type', 'message'),
             created_at=created_at,
-            metadata={
+            metadata_={
                 k: v
                 for k, v in msg.items()
                 if k not in ('ts', 'user', 'text', 'thread_ts', 'reply_count', 'type', 'edited')
@@ -92,47 +120,67 @@ class Message:
         )
 
 
-@dataclass
-class Reaction:
+class Reaction(Base):
     """Reaction on a message."""
 
-    id: int | None
-    message_id: int
-    name: str  # Emoji name without colons
-    user_id: str
-    created_at: datetime | None = None
+    __tablename__ = 'reactions'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_id: Mapped[int] = mapped_column(Integer, ForeignKey('messages.id', ondelete='CASCADE'), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)  # Emoji name without colons
+    user_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_reactions_unique', 'message_id', 'name', 'user_id', unique=True),
+        Index('idx_reactions_message', 'message_id'),
+        Index('idx_reactions_user', 'user_id'),
+    )
+
+    message: Mapped['Message'] = relationship(back_populates='reactions')
 
 
-@dataclass
-class MessageEmbedding:
+class MessageEmbedding(Base):
     """Vector embedding for a message."""
 
-    id: int | None
-    message_id: int
-    embedding: list[float] | None = None
-    model: str = 'text-embedding-ada-002'
-    created_at: datetime | None = None
+    __tablename__ = 'message_embeddings'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey('messages.id', ondelete='CASCADE'), unique=True, nullable=False
+    )
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))  # OpenAI ada-002 dimension
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    message: Mapped['Message'] = relationship(back_populates='embedding')
 
 
-@dataclass
-class SyncState:
+class SyncState(Base):
     """Sync state for a channel."""
 
-    channel_id: str
-    last_ts: str | None = None
-    last_sync_at: datetime | None = None
+    __tablename__ = 'sync_state'
+
+    channel_id: Mapped[str] = mapped_column(String(20), ForeignKey('channels.id'), primary_key=True)
+    last_ts: Mapped[str | None] = mapped_column(String(20))  # Last synced message timestamp
+    last_sync_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+
+    channel: Mapped['Channel'] = relationship(back_populates='sync_state')
 
 
-@dataclass
-class Reminder:
+class Reminder(Base):
     """Slack reminder."""
 
-    id: str
-    user_id: str
-    text: str | None = None
-    time: datetime | None = None
-    complete_ts: datetime | None = None
-    recurring: bool = False
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    __tablename__ = 'reminders'
+
+    id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    time: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    complete_ts: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    recurring: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    metadata_: Mapped[dict] = mapped_column('metadata', JSONB, default=dict)

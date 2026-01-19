@@ -1,12 +1,12 @@
-"""Database repository for CRUD operations."""
+"""Database repository for CRUD operations using SQLAlchemy ORM."""
 
-import json
 from datetime import datetime
 from typing import Any
 
-import asyncpg
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert
 
-from slack_assistant.db.connection import get_connection
+from slack_assistant.db.connection import get_session
 from slack_assistant.db.models import Channel, Message, Reaction, Reminder, SyncState, User
 
 
@@ -17,154 +17,115 @@ class Repository:
 
     async def upsert_channel(self, channel: Channel) -> None:
         """Insert or update a channel."""
-        async with get_connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO channels (id, name, channel_type, is_archived, created_at, updated_at, metadata)
-                VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-                ON CONFLICT (id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    channel_type = EXCLUDED.channel_type,
-                    is_archived = EXCLUDED.is_archived,
-                    updated_at = NOW(),
-                    metadata = EXCLUDED.metadata
-                """,
-                channel.id,
-                channel.name,
-                channel.channel_type,
-                channel.is_archived,
-                channel.created_at,
-                json.dumps(channel.metadata),
+        async with get_session() as session:
+            # Use __table__.c to reference columns to avoid metadata conflict
+            metadata_col = Channel.__table__.c.metadata
+            stmt = insert(Channel).values(
+                id=channel.id,
+                name=channel.name,
+                channel_type=channel.channel_type,
+                is_archived=channel.is_archived,
+                created_at=channel.created_at,
+            ).values({metadata_col: channel.metadata_})
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['id'],
+                set_={
+                    'name': stmt.excluded.name,
+                    'channel_type': stmt.excluded.channel_type,
+                    'is_archived': stmt.excluded.is_archived,
+                    metadata_col: stmt.excluded.metadata,
+                },
             )
+            await session.execute(stmt)
+            await session.commit()
 
     async def get_channel(self, channel_id: str) -> Channel | None:
         """Get a channel by ID."""
-        async with get_connection() as conn:
-            row = await conn.fetchrow('SELECT * FROM channels WHERE id = $1', channel_id)
-            if row:
-                return Channel(
-                    id=row['id'],
-                    name=row['name'],
-                    channel_type=row['channel_type'],
-                    is_archived=row['is_archived'],
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at'],
-                    metadata=json.loads(row['metadata']) if row['metadata'] else {},
-                )
-            return None
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.id == channel_id))
+            return result.scalar_one_or_none()
 
     async def get_all_channels(self) -> list[Channel]:
-        """Get all channels."""
-        async with get_connection() as conn:
-            rows = await conn.fetch('SELECT * FROM channels WHERE is_archived = FALSE')
-            return [
-                Channel(
-                    id=row['id'],
-                    name=row['name'],
-                    channel_type=row['channel_type'],
-                    is_archived=row['is_archived'],
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at'],
-                    metadata=json.loads(row['metadata']) if row['metadata'] else {},
-                )
-                for row in rows
-            ]
+        """Get all non-archived channels."""
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.is_archived == False))  # noqa: E712
+            return list(result.scalars().all())
 
     # User operations
 
     async def upsert_user(self, user: User) -> None:
         """Insert or update a user."""
-        async with get_connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO users (id, name, real_name, display_name, is_bot, updated_at, metadata)
-                VALUES ($1, $2, $3, $4, $5, NOW(), $6)
-                ON CONFLICT (id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    real_name = EXCLUDED.real_name,
-                    display_name = EXCLUDED.display_name,
-                    is_bot = EXCLUDED.is_bot,
-                    updated_at = NOW(),
-                    metadata = EXCLUDED.metadata
-                """,
-                user.id,
-                user.name,
-                user.real_name,
-                user.display_name,
-                user.is_bot,
-                json.dumps(user.metadata),
+        async with get_session() as session:
+            metadata_col = User.__table__.c.metadata
+            stmt = insert(User).values(
+                id=user.id,
+                name=user.name,
+                real_name=user.real_name,
+                display_name=user.display_name,
+                is_bot=user.is_bot,
+            ).values({metadata_col: user.metadata_})
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['id'],
+                set_={
+                    'name': stmt.excluded.name,
+                    'real_name': stmt.excluded.real_name,
+                    'display_name': stmt.excluded.display_name,
+                    'is_bot': stmt.excluded.is_bot,
+                    metadata_col: stmt.excluded.metadata,
+                },
             )
+            await session.execute(stmt)
+            await session.commit()
 
     async def get_user(self, user_id: str) -> User | None:
         """Get a user by ID."""
-        async with get_connection() as conn:
-            row = await conn.fetchrow('SELECT * FROM users WHERE id = $1', user_id)
-            if row:
-                return User(
-                    id=row['id'],
-                    name=row['name'],
-                    real_name=row['real_name'],
-                    display_name=row['display_name'],
-                    is_bot=row['is_bot'],
-                    updated_at=row['updated_at'],
-                    metadata=json.loads(row['metadata']) if row['metadata'] else {},
-                )
-            return None
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.id == user_id))
+            return result.scalar_one_or_none()
 
     # Message operations
 
     async def upsert_message(self, message: Message) -> int:
         """Insert or update a message, returning the database ID."""
-        async with get_connection() as conn:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO messages (
-                    channel_id, ts, user_id, text, thread_ts, reply_count,
-                    is_edited, message_type, created_at, updated_at, metadata
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)
-                ON CONFLICT (channel_id, ts) DO UPDATE SET
-                    user_id = EXCLUDED.user_id,
-                    text = EXCLUDED.text,
-                    thread_ts = EXCLUDED.thread_ts,
-                    reply_count = EXCLUDED.reply_count,
-                    is_edited = EXCLUDED.is_edited,
-                    updated_at = NOW(),
-                    metadata = EXCLUDED.metadata
-                RETURNING id
-                """,
-                message.channel_id,
-                message.ts,
-                message.user_id,
-                message.text,
-                message.thread_ts,
-                message.reply_count,
-                message.is_edited,
-                message.message_type,
-                message.created_at,
-                json.dumps(message.metadata),
-            )
-            return row['id']
+        async with get_session() as session:
+            metadata_col = Message.__table__.c.metadata
+            stmt = insert(Message).values(
+                channel_id=message.channel_id,
+                ts=message.ts,
+                user_id=message.user_id,
+                text=message.text,
+                thread_ts=message.thread_ts,
+                reply_count=message.reply_count,
+                is_edited=message.is_edited,
+                message_type=message.message_type,
+                created_at=message.created_at,
+            ).values({metadata_col: message.metadata_})
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['channel_id', 'ts'],
+                set_={
+                    'user_id': stmt.excluded.user_id,
+                    'text': stmt.excluded.text,
+                    'thread_ts': stmt.excluded.thread_ts,
+                    'reply_count': stmt.excluded.reply_count,
+                    'is_edited': stmt.excluded.is_edited,
+                    metadata_col: stmt.excluded.metadata,
+                },
+            ).returning(Message.id)
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.scalar_one()
 
     async def get_message(self, channel_id: str, ts: str) -> Message | None:
         """Get a message by channel and timestamp."""
-        async with get_connection() as conn:
-            row = await conn.fetchrow(
-                'SELECT * FROM messages WHERE channel_id = $1 AND ts = $2',
-                channel_id,
-                ts,
-            )
-            if row:
-                return self._row_to_message(row)
-            return None
+        async with get_session() as session:
+            result = await session.execute(select(Message).where(Message.channel_id == channel_id, Message.ts == ts))
+            return result.scalar_one_or_none()
 
     async def get_message_by_id(self, message_id: int) -> Message | None:
         """Get a message by database ID."""
-        async with get_connection() as conn:
-            row = await conn.fetchrow('SELECT * FROM messages WHERE id = $1', message_id)
-            if row:
-                return self._row_to_message(row)
-            return None
+        async with get_session() as session:
+            result = await session.execute(select(Message).where(Message.id == message_id))
+            return result.scalar_one_or_none()
 
     async def get_messages_since(
         self,
@@ -173,254 +134,209 @@ class Repository:
         limit: int = 100,
     ) -> list[Message]:
         """Get messages from a channel since a timestamp."""
-        async with get_connection() as conn:
+        async with get_session() as session:
             if since_ts:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM messages
-                    WHERE channel_id = $1 AND ts > $2
-                    ORDER BY ts ASC
-                    LIMIT $3
-                    """,
-                    channel_id,
-                    since_ts,
-                    limit,
+                stmt = (
+                    select(Message)
+                    .where(Message.channel_id == channel_id, Message.ts > since_ts)
+                    .order_by(Message.ts.asc())
+                    .limit(limit)
                 )
             else:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM messages
-                    WHERE channel_id = $1
-                    ORDER BY ts DESC
-                    LIMIT $2
-                    """,
-                    channel_id,
-                    limit,
-                )
-            return [self._row_to_message(row) for row in rows]
+                stmt = select(Message).where(Message.channel_id == channel_id).order_by(Message.ts.desc()).limit(limit)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
     async def get_thread_messages(self, channel_id: str, thread_ts: str) -> list[Message]:
         """Get all messages in a thread."""
-        async with get_connection() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM messages
-                WHERE channel_id = $1 AND (ts = $2 OR thread_ts = $2)
-                ORDER BY ts ASC
-                """,
-                channel_id,
-                thread_ts,
+        async with get_session() as session:
+            stmt = (
+                select(Message)
+                .where(
+                    Message.channel_id == channel_id,
+                    (Message.ts == thread_ts) | (Message.thread_ts == thread_ts),
+                )
+                .order_by(Message.ts.asc())
             )
-            return [self._row_to_message(row) for row in rows]
-
-    def _row_to_message(self, row: asyncpg.Record) -> Message:
-        """Convert a database row to a Message object."""
-        return Message(
-            id=row['id'],
-            channel_id=row['channel_id'],
-            ts=row['ts'],
-            user_id=row['user_id'],
-            text=row['text'],
-            thread_ts=row['thread_ts'],
-            reply_count=row['reply_count'],
-            is_edited=row['is_edited'],
-            message_type=row['message_type'],
-            created_at=row['created_at'],
-            updated_at=row['updated_at'],
-            metadata=json.loads(row['metadata']) if row['metadata'] else {},
-        )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
     # Reaction operations
 
     async def upsert_reactions(self, message_id: int, reactions: list[dict[str, Any]]) -> None:
         """Update reactions for a message (replace all)."""
-        async with get_connection() as conn:
+        async with get_session() as session:
             # Delete existing reactions
-            await conn.execute('DELETE FROM reactions WHERE message_id = $1', message_id)
+            await session.execute(delete(Reaction).where(Reaction.message_id == message_id))
 
             # Insert new reactions
             for reaction in reactions:
                 name = reaction.get('name', '')
                 users = reaction.get('users', [])
                 for user_id in users:
-                    await conn.execute(
-                        """
-                        INSERT INTO reactions (message_id, name, user_id, created_at)
-                        VALUES ($1, $2, $3, NOW())
-                        ON CONFLICT DO NOTHING
-                        """,
-                        message_id,
-                        name,
-                        user_id,
+                    stmt = insert(Reaction).values(
+                        message_id=message_id,
+                        name=name,
+                        user_id=user_id,
                     )
+                    stmt = stmt.on_conflict_do_nothing()
+                    await session.execute(stmt)
+
+            await session.commit()
 
     async def get_reactions(self, message_id: int) -> list[Reaction]:
         """Get reactions for a message."""
-        async with get_connection() as conn:
-            rows = await conn.fetch(
-                'SELECT * FROM reactions WHERE message_id = $1',
-                message_id,
-            )
-            return [
-                Reaction(
-                    id=row['id'],
-                    message_id=row['message_id'],
-                    name=row['name'],
-                    user_id=row['user_id'],
-                    created_at=row['created_at'],
-                )
-                for row in rows
-            ]
+        async with get_session() as session:
+            result = await session.execute(select(Reaction).where(Reaction.message_id == message_id))
+            return list(result.scalars().all())
 
     # Sync state operations
 
     async def get_sync_state(self, channel_id: str) -> SyncState | None:
         """Get sync state for a channel."""
-        async with get_connection() as conn:
-            row = await conn.fetchrow(
-                'SELECT * FROM sync_state WHERE channel_id = $1',
-                channel_id,
-            )
-            if row:
-                return SyncState(
-                    channel_id=row['channel_id'],
-                    last_ts=row['last_ts'],
-                    last_sync_at=row['last_sync_at'],
-                )
-            return None
+        async with get_session() as session:
+            result = await session.execute(select(SyncState).where(SyncState.channel_id == channel_id))
+            return result.scalar_one_or_none()
 
     async def upsert_sync_state(self, sync_state: SyncState) -> None:
         """Update sync state for a channel."""
-        async with get_connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO sync_state (channel_id, last_ts, last_sync_at)
-                VALUES ($1, $2, NOW())
-                ON CONFLICT (channel_id) DO UPDATE SET
-                    last_ts = EXCLUDED.last_ts,
-                    last_sync_at = NOW()
-                """,
-                sync_state.channel_id,
-                sync_state.last_ts,
+        async with get_session() as session:
+            stmt = insert(SyncState).values(
+                channel_id=sync_state.channel_id,
+                last_ts=sync_state.last_ts,
             )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['channel_id'],
+                set_={
+                    'last_ts': stmt.excluded.last_ts,
+                },
+            )
+            await session.execute(stmt)
+            await session.commit()
 
     # Reminder operations
 
     async def upsert_reminder(self, reminder: Reminder) -> None:
         """Insert or update a reminder."""
-        async with get_connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO reminders (
-                    id, user_id, text, time, complete_ts, recurring,
-                    created_at, updated_at, metadata
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW(), $7)
-                ON CONFLICT (id) DO UPDATE SET
-                    text = EXCLUDED.text,
-                    time = EXCLUDED.time,
-                    complete_ts = EXCLUDED.complete_ts,
-                    recurring = EXCLUDED.recurring,
-                    updated_at = NOW(),
-                    metadata = EXCLUDED.metadata
-                """,
-                reminder.id,
-                reminder.user_id,
-                reminder.text,
-                reminder.time,
-                reminder.complete_ts,
-                reminder.recurring,
-                json.dumps(reminder.metadata),
+        async with get_session() as session:
+            metadata_col = Reminder.__table__.c.metadata
+            stmt = insert(Reminder).values(
+                id=reminder.id,
+                user_id=reminder.user_id,
+                text=reminder.text,
+                time=reminder.time,
+                complete_ts=reminder.complete_ts,
+                recurring=reminder.recurring,
+            ).values({metadata_col: reminder.metadata_})
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['id'],
+                set_={
+                    'text': stmt.excluded.text,
+                    'time': stmt.excluded.time,
+                    'complete_ts': stmt.excluded.complete_ts,
+                    'recurring': stmt.excluded.recurring,
+                    metadata_col: stmt.excluded.metadata,
+                },
             )
+            await session.execute(stmt)
+            await session.commit()
 
     async def get_pending_reminders(self, user_id: str) -> list[Reminder]:
         """Get pending (incomplete) reminders for a user."""
-        async with get_connection() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT * FROM reminders
-                WHERE user_id = $1 AND complete_ts IS NULL
-                ORDER BY time ASC
-                """,
-                user_id,
+        async with get_session() as session:
+            result = await session.execute(
+                select(Reminder)
+                .where(Reminder.user_id == user_id, Reminder.complete_ts.is_(None))
+                .order_by(Reminder.time.asc())
             )
-            return [
-                Reminder(
-                    id=row['id'],
-                    user_id=row['user_id'],
-                    text=row['text'],
-                    time=row['time'],
-                    complete_ts=row['complete_ts'],
-                    recurring=row['recurring'],
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at'],
-                    metadata=json.loads(row['metadata']) if row['metadata'] else {},
-                )
-                for row in rows
-            ]
+            return list(result.scalars().all())
 
     # Status queries
 
     async def get_unread_mentions(self, user_id: str, since: datetime | None = None) -> list[Message]:
         """Get messages that mention a user."""
-        async with get_connection() as conn:
-            query = """
-                SELECT m.* FROM messages m
-                WHERE m.text LIKE $1
-            """
-            params: list[Any] = [f'%<@{user_id}>%']
+        async with get_session() as session:
+            mention_pattern = f'%<@{user_id}>%'
+            stmt = select(Message).where(Message.text.like(mention_pattern))
 
             if since:
-                query += ' AND m.created_at > $2'
-                params.append(since)
+                stmt = stmt.where(Message.created_at > since)
 
-            query += ' ORDER BY m.created_at DESC LIMIT 50'
-
-            rows = await conn.fetch(query, *params)
-            return [self._row_to_message(row) for row in rows]
+            stmt = stmt.order_by(Message.created_at.desc()).limit(50)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
     async def get_dm_messages(self, since: datetime | None = None) -> list[Message]:
         """Get recent DM messages."""
-        async with get_connection() as conn:
-            query = """
-                SELECT m.* FROM messages m
-                JOIN channels c ON m.channel_id = c.id
-                WHERE c.channel_type = 'im'
-            """
-            params: list[Any] = []
+        async with get_session() as session:
+            stmt = select(Message).join(Channel, Message.channel_id == Channel.id).where(Channel.channel_type == 'im')
 
             if since:
-                query += ' AND m.created_at > $1'
-                params.append(since)
+                stmt = stmt.where(Message.created_at > since)
 
-            query += ' ORDER BY m.created_at DESC LIMIT 50'
-
-            rows = await conn.fetch(query, *params)
-            return [self._row_to_message(row) for row in rows]
+            stmt = stmt.order_by(Message.created_at.desc()).limit(50)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
 
     async def get_threads_with_replies(self, user_id: str, since: datetime | None = None) -> list[dict[str, Any]]:
         """Get threads where user participated that have new replies."""
-        async with get_connection() as conn:
-            query = """
-                WITH user_threads AS (
-                    SELECT DISTINCT channel_id, COALESCE(thread_ts, ts) as thread_ts
-                    FROM messages
-                    WHERE user_id = $1
+        async with get_session() as session:
+            # First, find all threads the user has participated in
+            user_threads_stmt = (
+                select(Message.channel_id, Message.thread_ts, Message.ts).where(Message.user_id == user_id).distinct()
+            )
+            user_threads_result = await session.execute(user_threads_stmt)
+            user_threads = user_threads_result.all()
+
+            # Build set of (channel_id, thread_ts) tuples
+            thread_keys = set()
+            for row in user_threads:
+                channel_id, thread_ts, ts = row
+                # Use thread_ts if available, otherwise ts
+                effective_thread_ts = thread_ts or ts
+                thread_keys.add((channel_id, effective_thread_ts))
+
+            if not thread_keys:
+                return []
+
+            # Find replies in these threads from other users
+            results = []
+            for channel_id, thread_ts in thread_keys:
+                stmt = (
+                    select(Message, Channel.name.label('channel_name'))
+                    .join(Channel, Message.channel_id == Channel.id)
+                    .where(
+                        Message.channel_id == channel_id,
+                        (Message.ts == thread_ts) | (Message.thread_ts == thread_ts),
+                        Message.user_id != user_id,
+                    )
                 )
-                SELECT m.*, c.name as channel_name
-                FROM messages m
-                JOIN user_threads ut ON m.channel_id = ut.channel_id
-                    AND (m.ts = ut.thread_ts OR m.thread_ts = ut.thread_ts)
-                JOIN channels c ON m.channel_id = c.id
-                WHERE m.user_id != $1
-            """
-            params: list[Any] = [user_id]
 
-            if since:
-                query += ' AND m.created_at > $2'
-                params.append(since)
+                if since:
+                    stmt = stmt.where(Message.created_at > since)
 
-            query += ' ORDER BY m.created_at DESC LIMIT 100'
+                stmt = stmt.order_by(Message.created_at.desc()).limit(10)
+                result = await session.execute(stmt)
 
-            rows = await conn.fetch(query, *params)
-            return [dict(row) for row in rows]
+                for msg, channel_name in result:
+                    results.append(
+                        {
+                            'id': msg.id,
+                            'channel_id': msg.channel_id,
+                            'ts': msg.ts,
+                            'user_id': msg.user_id,
+                            'text': msg.text,
+                            'thread_ts': msg.thread_ts,
+                            'reply_count': msg.reply_count,
+                            'is_edited': msg.is_edited,
+                            'message_type': msg.message_type,
+                            'created_at': msg.created_at,
+                            'updated_at': msg.updated_at,
+                            'metadata': msg.metadata_,
+                            'channel_name': channel_name,
+                        }
+                    )
+
+            # Sort by created_at and limit
+            results.sort(key=lambda x: x.get('created_at') or datetime.min, reverse=True)
+            return results[:100]

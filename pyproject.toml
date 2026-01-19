@@ -11,6 +11,9 @@ dependencies = [
   'asyncpg>=0.30.0',
   'click>=8.1.0',
   'aiohttp>=3.9.0',
+  'sqlalchemy[asyncio]>=2.0.0',
+  'alembic>=1.14.0',
+  'pgvector>=0.3.0',
 ]
 
 [project.scripts]

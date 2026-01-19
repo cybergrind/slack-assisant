@@ -243,7 +243,7 @@ def reminders():
                     time=datetime.fromtimestamp(r['time']) if r.get('time') else None,
                     complete_ts=datetime.fromtimestamp(r['complete_ts']) if r.get('complete_ts') else None,
                     recurring=r.get('recurring', False),
-                    metadata={
+                    metadata_={
                         k: v
                         for k, v in r.items()
                         if k not in ('id', 'user', 'text', 'time', 'complete_ts', 'recurring')

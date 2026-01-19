@@ -80,7 +80,7 @@ class SlackPoller:
                 channel_type=self._get_channel_type(conv),
                 is_archived=conv.get('is_archived', False),
                 created_at=datetime.fromtimestamp(conv['created']) if conv.get('created') else None,
-                metadata={k: v for k, v in conv.items() if k not in ('id', 'name', 'is_archived', 'created')},
+                metadata_={k: v for k, v in conv.items() if k not in ('id', 'name', 'is_archived', 'created')},
             )
             await self.repository.upsert_channel(channel)
             self._channels[channel.id] = conv
@@ -183,6 +183,6 @@ class SlackPoller:
             real_name=user_info.get('real_name'),
             display_name=user_info.get('profile', {}).get('display_name'),
             is_bot=user_info.get('is_bot', False),
-            metadata={k: v for k, v in user_info.items() if k not in ('id', 'name', 'real_name', 'is_bot')},
+            metadata_={k: v for k, v in user_info.items() if k not in ('id', 'name', 'real_name', 'is_bot')},
         )
         await self.repository.upsert_user(user)

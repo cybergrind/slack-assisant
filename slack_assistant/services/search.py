@@ -4,10 +4,11 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
 
-from slack_assistant.db.connection import get_connection
-from slack_assistant.db.models import Message
+from sqlalchemy import select, text
+
+from slack_assistant.db.connection import get_session
+from slack_assistant.db.models import Channel, Message, User
 from slack_assistant.db.repository import Repository
 from slack_assistant.services.embeddings import EmbeddingService
 from slack_assistant.slack.client import SlackClient
@@ -100,25 +101,25 @@ class SearchService:
             logger.warning('Could not generate query embedding')
             return []
 
-        async with get_connection() as conn:
+        async with get_session() as session:
             # Use cosine similarity for vector search
-            rows = await conn.fetch(
-                """
+            # Note: Using raw SQL for vector operations as SQLAlchemy ORM doesn't natively support pgvector operators
+            stmt = text("""
                 SELECT
-                    m.*,
+                    m.id, m.channel_id, m.ts, m.user_id, m.text, m.thread_ts,
+                    m.reply_count, m.is_edited, m.message_type, m.created_at, m.updated_at, m.metadata,
                     c.name as channel_name,
                     u.display_name as user_name,
-                    1 - (me.embedding <=> $1::vector) as similarity
+                    1 - (me.embedding <=> :embedding::vector) as similarity
                 FROM message_embeddings me
                 JOIN messages m ON me.message_id = m.id
                 LEFT JOIN channels c ON m.channel_id = c.id
                 LEFT JOIN users u ON m.user_id = u.id
-                ORDER BY me.embedding <=> $1::vector
-                LIMIT $2
-                """,
-                query_embedding,
-                limit,
-            )
+                ORDER BY me.embedding <=> :embedding::vector
+                LIMIT :limit
+            """)
+            result = await session.execute(stmt, {'embedding': query_embedding, 'limit': limit})
+            rows = result.fetchall()
 
         results = []
         for row in rows:
@@ -126,9 +127,9 @@ class SearchService:
             results.append(
                 SearchResult(
                     message=message,
-                    channel_name=row['channel_name'],
-                    user_name=row['user_name'],
-                    score=float(row['similarity']),
+                    channel_name=row.channel_name,
+                    user_name=row.user_name,
+                    score=float(row.similarity),
                     link=self.client.get_message_link(message.channel_id, message.ts, message.thread_ts),
                     match_type='vector',
                 )
@@ -138,42 +139,34 @@ class SearchService:
 
     async def _text_search(self, query: str, limit: int) -> list[SearchResult]:
         """Search using text matching."""
-        # Simple ILIKE search - could be improved with full-text search
         search_pattern = f'%{query}%'
 
-        async with get_connection() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT
-                    m.*,
-                    c.name as channel_name,
-                    u.display_name as user_name
-                FROM messages m
-                LEFT JOIN channels c ON m.channel_id = c.id
-                LEFT JOIN users u ON m.user_id = u.id
-                WHERE m.text ILIKE $1
-                ORDER BY m.created_at DESC
-                LIMIT $2
-                """,
-                search_pattern,
-                limit,
+        async with get_session() as session:
+            stmt = (
+                select(Message, Channel.name.label('channel_name'), User.display_name.label('user_name'))
+                .join(Channel, Message.channel_id == Channel.id, isouter=True)
+                .join(User, Message.user_id == User.id, isouter=True)
+                .where(Message.text.ilike(search_pattern))
+                .order_by(Message.created_at.desc())
+                .limit(limit)
             )
+            result = await session.execute(stmt)
+            rows = result.all()
 
         results = []
-        for row in rows:
-            message = self._row_to_message(row)
+        for msg, channel_name, user_name in rows:
             # Simple relevance score based on match position
-            text = message.text or ''
-            match = re.search(re.escape(query), text, re.IGNORECASE)
-            score = 1.0 - (match.start() / len(text)) if match and text else 0.5
+            msg_text = msg.text or ''
+            match = re.search(re.escape(query), msg_text, re.IGNORECASE)
+            score = 1.0 - (match.start() / len(msg_text)) if match and msg_text else 0.5
 
             results.append(
                 SearchResult(
-                    message=message,
-                    channel_name=row['channel_name'],
-                    user_name=row['user_name'],
+                    message=msg,
+                    channel_name=channel_name,
+                    user_name=user_name,
                     score=score,
-                    link=self.client.get_message_link(message.channel_id, message.ts, message.thread_ts),
+                    link=self.client.get_message_link(msg.channel_id, msg.ts, msg.thread_ts),
                     match_type='text',
                 )
             )
@@ -190,7 +183,6 @@ class SearchService:
             ts = match.get('ts', '')
 
             message = Message(
-                id=None,
                 channel_id=channel_id,
                 ts=ts,
                 user_id=match.get('user'),
@@ -265,21 +257,25 @@ class SearchService:
 
         return []
 
-    def _row_to_message(self, row: Any) -> Message:
-        """Convert a database row to a Message object."""
+    def _row_to_message(self, row) -> Message:
+        """Convert a raw SQL row to a Message object."""
         import json
 
+        metadata = row.metadata
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+
         return Message(
-            id=row['id'],
-            channel_id=row['channel_id'],
-            ts=row['ts'],
-            user_id=row['user_id'],
-            text=row['text'],
-            thread_ts=row['thread_ts'],
-            reply_count=row['reply_count'],
-            is_edited=row['is_edited'],
-            message_type=row['message_type'],
-            created_at=row['created_at'],
-            updated_at=row['updated_at'],
-            metadata=json.loads(row['metadata']) if row['metadata'] else {},
+            id=row.id,
+            channel_id=row.channel_id,
+            ts=row.ts,
+            user_id=row.user_id,
+            text=row.text,
+            thread_ts=row.thread_ts,
+            reply_count=row.reply_count,
+            is_edited=row.is_edited,
+            message_type=row.message_type,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            metadata_=metadata if metadata else {},
         )
