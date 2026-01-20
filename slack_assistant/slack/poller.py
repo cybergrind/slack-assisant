@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +13,18 @@ from slack_assistant.slack.client import SlackClient
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ChannelSyncInfo:
+    """Information about a channel for smart sync decisions."""
+
+    channel: Channel
+    conv_data: dict[str, Any]
+    sync_state: SyncState | None
+    latest_ts: str | None  # Latest message ts from Slack API
+    has_new_messages: bool  # Whether there are new messages to sync
+    priority: int  # Lower = higher priority (DMs first)
 
 
 class SlackPoller:
@@ -107,28 +120,139 @@ class SlackPoller:
         return 'public_channel'
 
     async def _sync_all_messages(self, max_concurrent: int = 10) -> None:
-        """Sync messages from all channels concurrently.
+        """Sync messages from channels that have new activity.
 
-        Rate limiting is handled by the SlackClient, so we can safely run
-        multiple channel syncs in parallel.
+        Uses smart sync to skip channels with no new messages by comparing
+        the latest message timestamp from Slack API with our sync state.
 
         Args:
             max_concurrent: Maximum number of channels to sync concurrently.
         """
-        channels = await self.repository.get_all_channels()
+        # Build list of channels that need syncing
+        channels_to_sync = await self._get_channels_needing_sync()
 
-        if not channels:
+        if not channels_to_sync:
+            logger.debug('No channels need syncing')
             return
+
+        logger.info(f'Syncing {len(channels_to_sync)} channels with new activity')
 
         # Use semaphore to limit concurrent channel syncs
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def sync_with_semaphore(channel: Channel) -> None:
+        async def sync_with_semaphore(sync_info: ChannelSyncInfo) -> None:
             async with semaphore:
-                await self._sync_channel_messages(channel)
+                await self._sync_channel_messages(sync_info.channel)
 
         # Run all channel syncs concurrently (semaphore limits parallelism)
-        await asyncio.gather(*[sync_with_semaphore(ch) for ch in channels], return_exceptions=True)
+        await asyncio.gather(
+            *[sync_with_semaphore(info) for info in channels_to_sync],
+            return_exceptions=True,
+        )
+
+    async def _get_channels_needing_sync(self) -> list[ChannelSyncInfo]:
+        """Determine which channels have new messages to sync.
+
+        Compares the latest message timestamp from cached conversation data
+        with our sync state to skip channels with no new activity.
+
+        Returns:
+            List of ChannelSyncInfo for channels that need syncing,
+            sorted by priority (DMs first, then by activity).
+        """
+        channels = await self.repository.get_all_channels()
+        if not channels:
+            return []
+
+        # Batch fetch sync states
+        sync_states = await self.repository.get_sync_states_batch([ch.id for ch in channels])
+
+        channels_to_sync: list[ChannelSyncInfo] = []
+
+        for channel in channels:
+            conv_data = self._channels.get(channel.id, {})
+            sync_state = sync_states.get(channel.id)
+
+            # Get latest message ts from conversation metadata
+            latest = conv_data.get('latest', {})
+            latest_ts = latest.get('ts') if isinstance(latest, dict) else None
+
+            # Determine if channel has new messages
+            has_new = self._channel_has_new_messages(sync_state, latest_ts)
+
+            # Assign priority (lower = higher priority)
+            priority = self._get_channel_priority(channel, conv_data)
+
+            if has_new:
+                channels_to_sync.append(
+                    ChannelSyncInfo(
+                        channel=channel,
+                        conv_data=conv_data,
+                        sync_state=sync_state,
+                        latest_ts=latest_ts,
+                        has_new_messages=True,
+                        priority=priority,
+                    )
+                )
+            else:
+                logger.debug(f'Skipping {channel.name or channel.id}: no new messages')
+
+        # Sort by priority (DMs and active channels first)
+        channels_to_sync.sort(key=lambda x: x.priority)
+
+        return channels_to_sync
+
+    def _channel_has_new_messages(self, sync_state: SyncState | None, latest_ts: str | None) -> bool:
+        """Check if a channel has new messages since last sync.
+
+        Args:
+            sync_state: Our last sync state for this channel.
+            latest_ts: Latest message timestamp from Slack API.
+
+        Returns:
+            True if channel needs syncing.
+        """
+        # No sync state = never synced, needs sync
+        if sync_state is None or sync_state.last_ts is None:
+            return True
+
+        # No latest message info = can't determine, assume needs sync
+        if latest_ts is None:
+            return True
+
+        # Compare timestamps (Slack ts format: "1234567890.123456")
+        return latest_ts > sync_state.last_ts
+
+    def _get_channel_priority(self, channel: Channel, conv_data: dict[str, Any]) -> int:
+        """Get sync priority for a channel (lower = higher priority).
+
+        Priority order:
+        1. Self-DM (priority 0) - messages to yourself are urgent
+        2. DMs (priority 1) - direct messages are high priority
+        3. Group DMs (priority 2) - mpim
+        4. Channels with unread (priority 3)
+        5. Other channels (priority 10)
+
+        Args:
+            channel: Channel model.
+            conv_data: Raw conversation data from Slack API.
+
+        Returns:
+            Priority value (lower = sync first).
+        """
+        if channel.is_self_dm:
+            return 0
+        if channel.channel_type == 'im':
+            return 1
+        if channel.channel_type == 'mpim':
+            return 2
+
+        # Check unread count (available in conv_data)
+        unread = conv_data.get('unread_count', 0)
+        if unread and unread > 0:
+            return 3
+
+        return 10
 
     async def _sync_channel_messages(self, channel: Channel) -> None:
         """Sync messages from a single channel."""

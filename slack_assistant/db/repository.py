@@ -219,6 +219,21 @@ class Repository:
             result = await session.execute(select(SyncState).where(SyncState.channel_id == channel_id))
             return result.scalar_one_or_none()
 
+    async def get_sync_states_batch(self, channel_ids: list[str]) -> dict[str, SyncState]:
+        """Get sync states for multiple channels in a single query.
+
+        Args:
+            channel_ids: List of channel IDs.
+
+        Returns:
+            Dict mapping channel_id to SyncState.
+        """
+        if not channel_ids:
+            return {}
+        async with get_session() as session:
+            result = await session.execute(select(SyncState).where(SyncState.channel_id.in_(channel_ids)))
+            return {state.channel_id: state for state in result.scalars().all()}
+
     async def upsert_sync_state(self, sync_state: SyncState) -> None:
         """Update sync state for a channel."""
         async with get_session() as session:
