@@ -435,3 +435,117 @@ class Repository:
                 result[context_key] = has_replied
 
         return result
+
+    # User reaction queries
+
+    async def get_user_reactions(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        emoji_names: list[str] | None = None,
+    ) -> list[Reaction]:
+        """Get reactions made by a user.
+
+        Args:
+            user_id: The user ID to get reactions for.
+            since: Optional datetime to filter reactions after.
+            emoji_names: Optional list of emoji names to filter by.
+
+        Returns:
+            List of Reaction objects.
+        """
+        async with get_session() as session:
+            stmt = select(Reaction).where(Reaction.user_id == user_id)
+
+            if since:
+                stmt = stmt.where(Reaction.created_at > since)
+
+            if emoji_names:
+                stmt = stmt.where(Reaction.name.in_(emoji_names))
+
+            stmt = stmt.order_by(Reaction.created_at.desc()).limit(200)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def get_messages_with_user_reactions(
+        self,
+        user_id: str,
+        message_keys: list[tuple[str, str]],
+        emoji_names: list[str] | None = None,
+    ) -> dict[str, list[str]]:
+        """Check which messages have reactions from a user.
+
+        Args:
+            user_id: The user ID to check reactions for.
+            message_keys: List of (channel_id, message_ts) tuples to check.
+            emoji_names: Optional list of emoji names to filter by.
+
+        Returns:
+            Dict mapping "channel_id:message_ts" to list of emoji names
+            the user reacted with.
+        """
+        if not message_keys:
+            return {}
+
+        result: dict[str, list[str]] = {}
+
+        async with get_session() as session:
+            # Get message IDs for the given keys
+            for channel_id, message_ts in message_keys:
+                key = f'{channel_id}:{message_ts}'
+
+                # Find the message
+                msg_stmt = select(Message.id).where(Message.channel_id == channel_id, Message.ts == message_ts)
+                msg_result = await session.execute(msg_stmt)
+                message_id = msg_result.scalar_one_or_none()
+
+                if message_id is None:
+                    continue
+
+                # Find user's reactions on this message
+                reaction_stmt = select(Reaction.name).where(
+                    Reaction.message_id == message_id, Reaction.user_id == user_id
+                )
+
+                if emoji_names:
+                    reaction_stmt = reaction_stmt.where(Reaction.name.in_(emoji_names))
+
+                reaction_result = await session.execute(reaction_stmt)
+                emojis = [row[0] for row in reaction_result.all()]
+
+                if emojis:
+                    result[key] = emojis
+
+        return result
+
+    async def get_user_reactions_on_status_items(
+        self,
+        user_id: str,
+        status_items: list[dict[str, Any]],
+        acknowledgment_emojis: list[str],
+    ) -> dict[str, list[str]]:
+        """Check which status items have acknowledgment reactions from user.
+
+        Args:
+            user_id: The user ID to check reactions for.
+            status_items: List of status item dicts with 'channel_id' and 'message_ts'.
+            acknowledgment_emojis: List of emoji names that mean "acknowledged".
+
+        Returns:
+            Dict mapping "channel_id:message_ts" to list of emoji names.
+        """
+        if not status_items or not acknowledgment_emojis:
+            return {}
+
+        # Extract message keys from status items
+        message_keys = [
+            (item['channel_id'], item['message_ts'])
+            for item in status_items
+            if 'channel_id' in item and 'message_ts' in item
+        ]
+
+        return await self.get_messages_with_user_reactions(
+            user_id=user_id,
+            message_keys=message_keys,
+            emoji_names=acknowledgment_emojis,
+        )

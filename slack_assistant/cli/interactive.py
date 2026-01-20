@@ -82,6 +82,8 @@ class InteractiveConsole:
 - `/clear` - Clear conversation history
 - `/help` - Show this help message
 - `/status` - Get fresh status update
+- `/session` - Show current session info
+- `/new` - Start a new session (archives current one)
 
 **Input:**
 - `Enter` - Send message
@@ -92,6 +94,7 @@ class InteractiveConsole:
 - Ask to search for topics
 - Tell me to remember important follow-ups
 - Ask for more details on any item
+- Tell me about your emoji usage (e.g., "I use 👀 to mean I've seen it")
 """
         md = Markdown(help_text)
         console.print(Panel(md, title='Help', border_style='green'))
@@ -123,11 +126,61 @@ class InteractiveConsole:
             response = await self._agent.initialize()
             self._print_response(response)
 
+        elif cmd == '/session':
+            self._print_session_info()
+
+        elif cmd == '/new':
+            self._start_new_session()
+
         else:
             console.print(f'[red]Unknown command: {command}[/red]')
             console.print('[dim]Type /help for available commands.[/dim]')
 
         return True
+
+    def _print_session_info(self) -> None:
+        """Print current session information."""
+        session = self._agent.session
+        if session is None:
+            console.print('[yellow]No active session.[/yellow]')
+            return
+
+        info_text = f"""**Session Info**
+
+- **Session ID:** {session.session_id}
+- **Started:** {session.started_at}
+- **Last Activity:** {session.last_activity_at}
+- **Age:** {session.get_session_age_hours():.1f} hours
+- **Items Processed:** {len(session.processed_items)}
+- **Current Focus:** {session.current_focus or 'None'}
+"""
+
+        if session.conversation_summary:
+            info_text += f"""
+**Last Summary:**
+{session.conversation_summary.summary_text}
+"""
+            if session.conversation_summary.pending_follow_ups:
+                info_text += '\n**Pending Follow-ups:**\n'
+                for follow_up in session.conversation_summary.pending_follow_ups:
+                    info_text += f'- {follow_up}\n'
+
+        md = Markdown(info_text)
+        console.print(Panel(md, title='Session', border_style='cyan'))
+
+    def _start_new_session(self) -> None:
+        """Start a new session, archiving the current one."""
+        old_session = self._agent.session
+        new_session = self._agent.start_new_session()
+
+        if old_session:
+            console.print(
+                f'[dim]Archived session {old_session.session_id} '
+                f'({len(old_session.processed_items)} items processed)[/dim]'
+            )
+
+        console.print(f'[green]Started new session: {new_session.session_id}[/green]')
+        self._agent.clear_conversation()
 
     async def run(self) -> None:
         """Run the interactive console loop."""

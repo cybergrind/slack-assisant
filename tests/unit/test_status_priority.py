@@ -56,9 +56,9 @@ class TestStatusMentionPriority:
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
-        mock_repository.get_channels_batch = AsyncMock(return_value=[
-            Channel(id='C123', name='general', channel_type='public_channel')
-        ])
+        mock_repository.get_channels_batch = AsyncMock(
+            return_value=[Channel(id='C123', name='general', channel_type='public_channel')]
+        )
 
         status = await status_service.get_status()
 
@@ -88,9 +88,9 @@ class TestStatusMentionPriority:
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
-        mock_repository.get_channels_batch = AsyncMock(return_value=[
-            Channel(id='C123', name='general', channel_type='public_channel')
-        ])
+        mock_repository.get_channels_batch = AsyncMock(
+            return_value=[Channel(id='C123', name='general', channel_type='public_channel')]
+        )
 
         status = await status_service.get_status()
 
@@ -120,9 +120,9 @@ class TestStatusMentionPriority:
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
-        mock_repository.get_channels_batch = AsyncMock(return_value=[
-            Channel(id='C123', name='general', channel_type='public_channel')
-        ])
+        mock_repository.get_channels_batch = AsyncMock(
+            return_value=[Channel(id='C123', name='general', channel_type='public_channel')]
+        )
 
         status = await status_service.get_status()
 
@@ -160,7 +160,7 @@ class TestStatusMentionPriority:
         mock_repository.get_unread_mentions = AsyncMock(return_value=[mention1, mention2])
         mock_repository.get_user_reply_status_batch = AsyncMock(
             return_value={
-                'C123:1234567890.000000': True,   # Replied to first
+                'C123:1234567890.000000': True,  # Replied to first
                 'C456:1234567891.000000': False,  # Not replied to second
             }
         )
@@ -168,10 +168,12 @@ class TestStatusMentionPriority:
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
-        mock_repository.get_channels_batch = AsyncMock(return_value=[
-            Channel(id='C123', name='general', channel_type='public_channel'),
-            Channel(id='C456', name='random', channel_type='public_channel'),
-        ])
+        mock_repository.get_channels_batch = AsyncMock(
+            return_value=[
+                Channel(id='C123', name='general', channel_type='public_channel'),
+                Channel(id='C456', name='random', channel_type='public_channel'),
+            ]
+        )
 
         status = await status_service.get_status()
 

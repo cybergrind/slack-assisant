@@ -7,11 +7,16 @@ from typing import Any
 from slack_assistant.agent.conversation import ConversationManager
 from slack_assistant.agent.llm import BaseLLMClient, get_llm_client
 from slack_assistant.agent.llm.models import ToolCall
-from slack_assistant.agent.prompts import INITIAL_STATUS_PROMPT, build_system_prompt
+from slack_assistant.agent.prompts import (
+    INITIAL_STATUS_PROMPT,
+    RESUME_STATUS_PROMPT,
+    build_system_prompt,
+)
 from slack_assistant.agent.tools import (
     ContextTool,
     PreferencesTool,
     SearchTool,
+    SessionTool,
     StatusTool,
     ThreadTool,
     ToolRegistry,
@@ -19,6 +24,7 @@ from slack_assistant.agent.tools import (
 from slack_assistant.db.repository import Repository
 from slack_assistant.preferences import PreferenceStorage
 from slack_assistant.services.embeddings import EmbeddingService
+from slack_assistant.session import SessionState, SessionStorage
 from slack_assistant.slack.client import SlackClient
 
 
@@ -43,6 +49,7 @@ class AgentController:
         repository: Repository,
         llm_client: BaseLLMClient | None = None,
         preference_storage: PreferenceStorage | None = None,
+        session_storage: SessionStorage | None = None,
         embedding_service: EmbeddingService | None = None,
     ):
         """Initialize the agent controller.
@@ -52,25 +59,30 @@ class AgentController:
             repository: Database repository.
             llm_client: LLM client (defaults to config-based).
             preference_storage: Preference storage (defaults to file-based).
+            session_storage: Session storage (defaults to file-based).
             embedding_service: Embedding service for vector search.
         """
         self._client = client
         self._repository = repository
         self._llm = llm_client or get_llm_client()
         self._prefs_storage = preference_storage or PreferenceStorage()
+        self._session_storage = session_storage or SessionStorage()
         self._embedding_service = embedding_service
+
+        # Session state (initialized later)
+        self._session: SessionState | None = None
+        self._is_resumed_session: bool = False
 
         # Initialize conversation
         self._conversation = ConversationManager()
 
         # Initialize tool registry
         self._tools = ToolRegistry()
-        self._setup_tools()
 
     def _setup_tools(self) -> None:
         """Register all available tools."""
         # Status tool
-        self._tools.register(StatusTool(self._client, self._repository))
+        self._tools.register(StatusTool(self._client, self._repository, self._session))
 
         # Search tool
         self._tools.register(SearchTool(self._client, self._repository, self._embedding_service))
@@ -84,16 +96,30 @@ class AgentController:
         # Preferences tool
         self._tools.register(PreferencesTool(self._prefs_storage))
 
+        # Session tool
+        if self._session is not None:
+            self._tools.register(SessionTool(self._session_storage, self._session))
+
     def _build_system_prompt(self) -> str:
-        """Build system prompt with current preferences."""
+        """Build system prompt with current preferences and session context."""
         prefs = self._prefs_storage.load()
 
         user_context = f'User ID: {self._client.user_id}' if self._client.user_id else ''
+
+        # Build session context
+        session_context = ''
+        if self._session is not None:
+            if self._is_resumed_session:
+                session_context = f'Resuming previous session:\n{self._session.get_summary_text()}'
+            else:
+                session_context = f'New session started: {self._session.session_id}'
 
         return build_system_prompt(
             user_context=user_context,
             custom_rules=prefs.get_rules_text(),
             remembered_facts=prefs.get_facts_text(),
+            session_context=session_context,
+            emoji_patterns=prefs.get_emoji_patterns_text(),
         )
 
     async def initialize(self) -> AgentResponse:
@@ -102,11 +128,54 @@ class AgentController:
         Returns:
             Initial greeting with status summary.
         """
+        # Initialize session
+        self._session, self._is_resumed_session = self._session_storage.get_or_create()
+
+        # Setup tools (needs session to be initialized first)
+        self._setup_tools()
+
         # Clear any existing conversation
         self._conversation.clear()
 
+        # Choose appropriate prompt based on session state
+        if self._is_resumed_session and self._session.conversation_summary:
+            prompt = RESUME_STATUS_PROMPT
+        else:
+            prompt = INITIAL_STATUS_PROMPT
+
         # Send initial status prompt
-        return await self.process_message(INITIAL_STATUS_PROMPT)
+        return await self.process_message(prompt)
+
+    def start_new_session(self) -> SessionState:
+        """Start a fresh session, archiving any existing one.
+
+        Returns:
+            The new session state.
+        """
+        # Archive current session if exists
+        if self._session is not None:
+            self._session_storage.archive(self._session)
+
+        # Create new session
+        self._session = SessionState()
+        self._session_storage.save(self._session)
+        self._is_resumed_session = False
+
+        # Re-setup tools with new session
+        self._tools = ToolRegistry()
+        self._setup_tools()
+
+        return self._session
+
+    @property
+    def session(self) -> SessionState | None:
+        """Get current session state."""
+        return self._session
+
+    @property
+    def is_resumed_session(self) -> bool:
+        """Check if this is a resumed session."""
+        return self._is_resumed_session
 
     async def process_message(self, user_input: str) -> AgentResponse:
         """Process a user message and return response.
