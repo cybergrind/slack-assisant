@@ -1,13 +1,17 @@
 """Analysis tool for LLM-based message categorization."""
 
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from slack_assistant.agent.tools.base import BaseTool
 from slack_assistant.db.repository import Repository
 from slack_assistant.formatting import collect_entities
 from slack_assistant.formatting.patterns import format_text
 from slack_assistant.slack.client import SlackClient
+
+
+if TYPE_CHECKING:
+    from slack_assistant.session import SessionState
 
 
 class AnalysisTool(BaseTool):
@@ -18,15 +22,22 @@ class AnalysisTool(BaseTool):
     to intelligently categorize and prioritize based on actual message content.
     """
 
-    def __init__(self, client: SlackClient, repository: Repository):
+    def __init__(
+        self,
+        client: SlackClient,
+        repository: Repository,
+        session: 'SessionState | None' = None,
+    ):
         """Initialize analysis tool.
 
         Args:
             client: Slack client for generating links.
             repository: Database repository.
+            session: Optional session state for filtering already-analyzed items.
         """
         self._client = client
         self._repository = repository
+        self._session = session
 
     @property
     def name(self) -> str:
@@ -53,7 +64,10 @@ You should assign priority based on content analysis:
 - LOW: General chat, automated messages, already-addressed items
 
 The metadata_priority is a hint based on message type, but you should override
-it based on content. A self-DM saying "super urgent" should be CRITICAL."""
+it based on content. A self-DM saying "super urgent" should be CRITICAL.
+
+By default, messages you've already analyzed (via save_analysis) are excluded.
+Set exclude_analyzed=false to include them if you need to re-analyze."""
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -86,6 +100,11 @@ it based on content. A self-DM saying "super urgent" should be CRITICAL."""
                     'minimum': 100,
                     'maximum': 2000,
                 },
+                'exclude_analyzed': {
+                    'type': 'boolean',
+                    'description': 'Exclude messages already analyzed in this session (default: true)',
+                    'default': True,
+                },
             },
             'required': [],
         }
@@ -96,6 +115,7 @@ it based on content. A self-DM saying "super urgent" should be CRITICAL."""
         max_messages: int = 50,
         include_own_messages: bool = False,
         text_limit: int = 500,
+        exclude_analyzed: bool = True,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Analyze recent messages for LLM categorization.
@@ -105,6 +125,7 @@ it based on content. A self-DM saying "super urgent" should be CRITICAL."""
             max_messages: Maximum number of messages to return.
             include_own_messages: Include messages sent by the user.
             text_limit: Maximum characters per message text.
+            exclude_analyzed: Exclude messages already analyzed in this session.
 
         Returns:
             Dict with messages and metadata for LLM analysis.
@@ -122,6 +143,14 @@ it based on content. A self-DM saying "super urgent" should be CRITICAL."""
             limit=max_messages,
             include_own_messages=include_own_messages,
         )
+
+        # Filter out already-analyzed messages if session is available
+        analyzed_keys: set[str] = set()
+        if exclude_analyzed and self._session is not None:
+            analyzed_keys = self._session.get_analyzed_keys()
+            raw_messages = [
+                msg for msg in raw_messages if msg['id'] not in analyzed_keys
+            ]
 
         # Collect all user IDs: message senders + users mentioned in text
         all_user_ids: set[str] = set()
@@ -170,7 +199,7 @@ it based on content. A self-DM saying "super urgent" should be CRITICAL."""
                 'metadata_priority': msg['metadata_priority'],
             })
 
-        return {
+        result: dict[str, Any] = {
             'user_id': user_id,
             'hours_back': hours_back,
             'total_found': len(raw_messages),
@@ -178,3 +207,8 @@ it based on content. A self-DM saying "super urgent" should be CRITICAL."""
             'include_own_messages': include_own_messages,
             'messages': messages,
         }
+
+        if exclude_analyzed and analyzed_keys:
+            result['excluded_already_analyzed'] = len(analyzed_keys)
+
+        return result

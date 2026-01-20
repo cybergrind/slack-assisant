@@ -83,7 +83,7 @@ class AgentController:
     def _setup_tools(self) -> None:
         """Register all available tools."""
         # Analysis tool (primary tool for status requests)
-        self._tools.register(AnalysisTool(self._client, self._repository))
+        self._tools.register(AnalysisTool(self._client, self._repository, self._session))
 
         # Status tool (legacy, for backwards compatibility)
         self._tools.register(StatusTool(self._client, self._repository, self._session))

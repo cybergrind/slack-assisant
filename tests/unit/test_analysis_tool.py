@@ -7,6 +7,7 @@ import pytest
 
 from slack_assistant.agent.tools.analysis_tool import AnalysisTool
 from slack_assistant.db.models import User
+from slack_assistant.session import SessionState
 
 
 class TestAnalysisTool:
@@ -377,3 +378,163 @@ class TestAnalysisTool:
 
         msg = result['messages'][0]
         assert msg['text'] == '@Alice and @Bob please review'
+
+    @pytest.mark.asyncio
+    async def test_execute_exclude_analyzed_by_default(self, mock_client, mock_repository):
+        """Test that already-analyzed messages are excluded by default."""
+        session = SessionState()
+        # Mark a message as already analyzed
+        session.add_analyzed_item(
+            channel_id='C123',
+            message_ts='1234567890.123456',
+            priority='HIGH',
+            summary='Already analyzed',
+        )
+
+        tool = AnalysisTool(mock_client, mock_repository, session)
+
+        mock_repository.get_recent_messages_for_analysis.return_value = [
+            {
+                'id': 'C123:1234567890.123456',  # This one is already analyzed
+                'db_id': 1,
+                'channel_id': 'C123',
+                'channel': '#general',
+                'channel_type': 'public_channel',
+                'user_id': 'U456',
+                'is_own_message': False,
+                'is_mention': False,
+                'is_dm': False,
+                'is_self_dm': False,
+                'text': 'Already analyzed message',
+                'thread_ts': None,
+                'timestamp': datetime.now().isoformat(),
+                'metadata_priority': 'HIGH',
+            },
+            {
+                'id': 'C123:9999999999.999999',  # This one is new
+                'db_id': 2,
+                'channel_id': 'C123',
+                'channel': '#general',
+                'channel_type': 'public_channel',
+                'user_id': 'U789',
+                'is_own_message': False,
+                'is_mention': False,
+                'is_dm': False,
+                'is_self_dm': False,
+                'text': 'New message',
+                'thread_ts': None,
+                'timestamp': datetime.now().isoformat(),
+                'metadata_priority': 'LOW',
+            },
+        ]
+        mock_repository.get_users_batch.return_value = []
+
+        result = await tool.execute()
+
+        # Should only return the new message
+        assert result['returned'] == 1
+        assert result['messages'][0]['id'] == 'C123:9999999999.999999'
+        assert result['excluded_already_analyzed'] == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_include_analyzed_when_requested(self, mock_client, mock_repository):
+        """Test that already-analyzed messages can be included."""
+        session = SessionState()
+        session.add_analyzed_item(
+            channel_id='C123',
+            message_ts='1234567890.123456',
+            priority='HIGH',
+            summary='Already analyzed',
+        )
+
+        tool = AnalysisTool(mock_client, mock_repository, session)
+
+        mock_repository.get_recent_messages_for_analysis.return_value = [
+            {
+                'id': 'C123:1234567890.123456',
+                'db_id': 1,
+                'channel_id': 'C123',
+                'channel': '#general',
+                'channel_type': 'public_channel',
+                'user_id': 'U456',
+                'is_own_message': False,
+                'is_mention': False,
+                'is_dm': False,
+                'is_self_dm': False,
+                'text': 'Already analyzed message',
+                'thread_ts': None,
+                'timestamp': datetime.now().isoformat(),
+                'metadata_priority': 'HIGH',
+            },
+        ]
+        mock_repository.get_users_batch.return_value = []
+
+        result = await tool.execute(exclude_analyzed=False)
+
+        # Should return the analyzed message when exclude_analyzed=False
+        assert result['returned'] == 1
+        assert result['messages'][0]['id'] == 'C123:1234567890.123456'
+        assert 'excluded_already_analyzed' not in result
+
+    @pytest.mark.asyncio
+    async def test_execute_no_session_includes_all(self, mock_client, mock_repository):
+        """Test that without a session, all messages are included."""
+        tool = AnalysisTool(mock_client, mock_repository, session=None)
+
+        mock_repository.get_recent_messages_for_analysis.return_value = [
+            {
+                'id': 'C123:1234567890.123456',
+                'db_id': 1,
+                'channel_id': 'C123',
+                'channel': '#general',
+                'channel_type': 'public_channel',
+                'user_id': 'U456',
+                'is_own_message': False,
+                'is_mention': False,
+                'is_dm': False,
+                'is_self_dm': False,
+                'text': 'Test message',
+                'thread_ts': None,
+                'timestamp': datetime.now().isoformat(),
+                'metadata_priority': 'LOW',
+            },
+        ]
+        mock_repository.get_users_batch.return_value = []
+
+        result = await tool.execute()
+
+        # Without session, all messages should be returned
+        assert result['returned'] == 1
+        assert 'excluded_already_analyzed' not in result
+
+    @pytest.mark.asyncio
+    async def test_execute_empty_analyzed_keys(self, mock_client, mock_repository):
+        """Test behavior with session but no analyzed items."""
+        session = SessionState()  # Empty session
+        tool = AnalysisTool(mock_client, mock_repository, session)
+
+        mock_repository.get_recent_messages_for_analysis.return_value = [
+            {
+                'id': 'C123:1234567890.123456',
+                'db_id': 1,
+                'channel_id': 'C123',
+                'channel': '#general',
+                'channel_type': 'public_channel',
+                'user_id': 'U456',
+                'is_own_message': False,
+                'is_mention': False,
+                'is_dm': False,
+                'is_self_dm': False,
+                'text': 'Test message',
+                'thread_ts': None,
+                'timestamp': datetime.now().isoformat(),
+                'metadata_priority': 'LOW',
+            },
+        ]
+        mock_repository.get_users_batch.return_value = []
+
+        result = await tool.execute()
+
+        # All messages should be returned, no excluded_already_analyzed key
+        assert result['returned'] == 1
+        assert 'excluded_already_analyzed' not in result

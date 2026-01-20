@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from slack_assistant.session import (
+    AnalyzedItem,
     ConversationSummary,
     ItemDisposition,
     ProcessedItem,
@@ -191,3 +192,138 @@ class TestItemDisposition:
         """Test disposition enum comparison."""
         assert ItemDisposition.REVIEWED == ItemDisposition.REVIEWED
         assert ItemDisposition.REVIEWED != ItemDisposition.DEFERRED
+
+
+class TestAnalyzedItem:
+    """Tests for AnalyzedItem model."""
+
+    def test_analyzed_item_key(self):
+        """Test analyzed item key generation."""
+        item = AnalyzedItem(
+            channel_id='C123',
+            message_ts='1234.5678',
+            priority='HIGH',
+            summary='Test summary',
+        )
+        assert item.key == 'C123:1234.5678'
+
+    def test_analyzed_item_with_optional_fields(self):
+        """Test analyzed item with all optional fields."""
+        item = AnalyzedItem(
+            channel_id='C123',
+            message_ts='1234.5678',
+            thread_ts='1234.0000',
+            priority='CRITICAL',
+            summary='Urgent request',
+            action_needed='Reply with approval',
+            context_notes='Related to project X',
+        )
+        assert item.thread_ts == '1234.0000'
+        assert item.action_needed == 'Reply with approval'
+        assert item.context_notes == 'Related to project X'
+        assert item.analyzed_at is not None
+
+    def test_analyzed_item_defaults(self):
+        """Test analyzed item default values."""
+        item = AnalyzedItem(
+            channel_id='C123',
+            message_ts='1234.5678',
+            priority='LOW',
+            summary='General chat',
+        )
+        assert item.thread_ts is None
+        assert item.action_needed is None
+        assert item.context_notes is None
+
+
+class TestSessionStateAnalyzedItems:
+    """Tests for SessionState analyzed item methods."""
+
+    def test_add_analyzed_item(self):
+        """Test adding analyzed items to session."""
+        session = SessionState()
+        assert len(session.analyzed_items) == 0
+
+        item = session.add_analyzed_item(
+            channel_id='C123',
+            message_ts='1234.5678',
+            priority='HIGH',
+            summary='Test message',
+            action_needed='Reply needed',
+        )
+
+        assert len(session.analyzed_items) == 1
+        assert item.channel_id == 'C123'
+        assert item.message_ts == '1234.5678'
+        assert item.priority == 'HIGH'
+        assert item.summary == 'Test message'
+        assert item.action_needed == 'Reply needed'
+
+    def test_add_analyzed_item_upserts(self):
+        """Test that adding analyzed item with same key upserts."""
+        session = SessionState()
+
+        # Add first item
+        session.add_analyzed_item(
+            channel_id='C123',
+            message_ts='1234.5678',
+            priority='MEDIUM',
+            summary='First analysis',
+        )
+        assert len(session.analyzed_items) == 1
+        assert session.analyzed_items[0].priority == 'MEDIUM'
+
+        # Add item with same key - should replace
+        session.add_analyzed_item(
+            channel_id='C123',
+            message_ts='1234.5678',
+            priority='CRITICAL',
+            summary='Updated analysis',
+        )
+        assert len(session.analyzed_items) == 1
+        assert session.analyzed_items[0].priority == 'CRITICAL'
+        assert session.analyzed_items[0].summary == 'Updated analysis'
+
+    def test_get_analyzed_item_found(self):
+        """Test getting an existing analyzed item."""
+        session = SessionState()
+        session.add_analyzed_item(
+            channel_id='C123',
+            message_ts='1234.5678',
+            priority='HIGH',
+            summary='Test',
+        )
+
+        item = session.get_analyzed_item('C123', '1234.5678')
+        assert item is not None
+        assert item.priority == 'HIGH'
+
+    def test_get_analyzed_item_not_found(self):
+        """Test getting a non-existent analyzed item."""
+        session = SessionState()
+        item = session.get_analyzed_item('C123', '9999.9999')
+        assert item is None
+
+    def test_get_analyzed_keys(self):
+        """Test getting analyzed item keys."""
+        session = SessionState()
+        session.add_analyzed_item('C123', '1111.1111', 'HIGH', 'Summary 1')
+        session.add_analyzed_item('C456', '2222.2222', 'LOW', 'Summary 2')
+
+        keys = session.get_analyzed_keys()
+        assert keys == {'C123:1111.1111', 'C456:2222.2222'}
+
+    def test_get_analyzed_keys_empty(self):
+        """Test getting analyzed keys when empty."""
+        session = SessionState()
+        keys = session.get_analyzed_keys()
+        assert keys == set()
+
+    def test_session_summary_includes_analyzed_count(self):
+        """Test that session summary includes analyzed items count."""
+        session = SessionState()
+        session.add_analyzed_item('C123', '1111.1111', 'HIGH', 'Summary 1')
+        session.add_analyzed_item('C456', '2222.2222', 'LOW', 'Summary 2')
+
+        summary = session.get_summary_text()
+        assert 'Items analyzed: 2' in summary

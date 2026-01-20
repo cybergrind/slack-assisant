@@ -40,11 +40,14 @@ Actions:
 - set_focus: Set the current focus/topic being worked on
 - save_summary: Save a conversation summary with key topics and pending follow-ups
 - get_processed_items: List all items processed in this session
+- save_analysis: Save your priority/summary analysis for a message item
+- get_all_analyses: Retrieve all your previous message analyses
 
 Use this tool to:
 - Track which items have been reviewed during the conversation
 - Set your current focus so it persists across interactions
-- Save summaries when the user leaves so you can resume later"""
+- Save summaries when the user leaves so you can resume later
+- Save your analysis (priority, summary) for messages so you don't re-analyze them"""
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -61,6 +64,8 @@ Use this tool to:
                         'set_focus',
                         'save_summary',
                         'get_processed_items',
+                        'save_analysis',
+                        'get_all_analyses',
                     ],
                     'description': 'Action to perform',
                 },
@@ -98,6 +103,23 @@ Use this tool to:
                     'items': {'type': 'string'},
                     'description': 'Pending follow-up items (for save_summary action)',
                 },
+                'priority': {
+                    'type': 'string',
+                    'enum': ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+                    'description': 'Priority level for the message (for save_analysis action)',
+                },
+                'summary': {
+                    'type': 'string',
+                    'description': 'Brief description of the message (for save_analysis action)',
+                },
+                'action_needed': {
+                    'type': 'string',
+                    'description': 'What action is required (optional, for save_analysis action)',
+                },
+                'context_notes': {
+                    'type': 'string',
+                    'description': 'Relevant context notes (optional, for save_analysis action)',
+                },
             },
             'required': ['action'],
         }
@@ -113,6 +135,10 @@ Use this tool to:
         summary_text: str | None = None,
         key_topics: list[str] | None = None,
         pending_follow_ups: list[str] | None = None,
+        priority: str | None = None,
+        summary: str | None = None,
+        action_needed: str | None = None,
+        context_notes: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Execute session management action.
@@ -127,6 +153,10 @@ Use this tool to:
             summary_text: Summary of the conversation.
             key_topics: Key topics discussed.
             pending_follow_ups: Pending follow-up items.
+            priority: Priority level (for save_analysis).
+            summary: Brief description (for save_analysis).
+            action_needed: What action is required (for save_analysis).
+            context_notes: Relevant context (for save_analysis).
 
         Returns:
             Action result.
@@ -151,6 +181,14 @@ Use this tool to:
 
         elif action == 'get_processed_items':
             return self._get_processed_items()
+
+        elif action == 'save_analysis':
+            return self._save_analysis(
+                channel_id, message_ts, thread_ts, priority, summary, action_needed, context_notes
+            )
+
+        elif action == 'get_all_analyses':
+            return self._get_all_analyses()
 
         else:
             return {'error': f'Unknown action: {action}'}
@@ -253,6 +291,70 @@ Use this tool to:
                 'notes': item.notes,
             }
             for item in self._session.processed_items
+        ]
+
+        return {
+            'session_id': self._session.session_id,
+            'total_items': len(items),
+            'items': items,
+        }
+
+    def _save_analysis(
+        self,
+        channel_id: str | None,
+        message_ts: str | None,
+        thread_ts: str | None,
+        priority: str | None,
+        summary: str | None,
+        action_needed: str | None,
+        context_notes: str | None,
+    ) -> dict[str, Any]:
+        """Save LLM's analysis for a message item."""
+        if not channel_id or not message_ts:
+            return {'error': 'channel_id and message_ts are required'}
+        if not priority:
+            return {'error': 'priority is required'}
+        if not summary:
+            return {'error': 'summary is required'}
+
+        valid_priorities = {'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'}
+        if priority not in valid_priorities:
+            return {'error': f'priority must be one of: {", ".join(valid_priorities)}'}
+
+        item = self._session.add_analyzed_item(
+            channel_id=channel_id,
+            message_ts=message_ts,
+            thread_ts=thread_ts,
+            priority=priority,
+            summary=summary,
+            action_needed=action_needed,
+            context_notes=context_notes,
+        )
+        self._storage.save(self._session)
+
+        return {
+            'success': True,
+            'channel_id': channel_id,
+            'message_ts': message_ts,
+            'priority': priority,
+            'summary': summary,
+            'analyzed_at': item.analyzed_at,
+        }
+
+    def _get_all_analyses(self) -> dict[str, Any]:
+        """Get all LLM analyses from this session."""
+        items = [
+            {
+                'channel_id': item.channel_id,
+                'message_ts': item.message_ts,
+                'thread_ts': item.thread_ts,
+                'priority': item.priority,
+                'summary': item.summary,
+                'action_needed': item.action_needed,
+                'context_notes': item.context_notes,
+                'analyzed_at': item.analyzed_at,
+            }
+            for item in self._session.analyzed_items
         ]
 
         return {
