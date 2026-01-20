@@ -160,8 +160,20 @@ class SlackClient:
         channel_id: str,
         thread_ts: str,
         limit: int = 100,
+        include_parent: bool = True,
     ) -> list[dict[str, Any]]:
-        """Fetch replies in a thread."""
+        """Fetch replies in a thread.
+
+        Args:
+            channel_id: Channel ID containing the thread.
+            thread_ts: Thread parent timestamp.
+            limit: Maximum number of messages to return.
+            include_parent: If True, include the parent message (default: True).
+                           If False, only return replies.
+
+        Returns:
+            List of messages in the thread.
+        """
         try:
             response = await self._execute(
                 'conversations.replies',
@@ -170,8 +182,10 @@ class SlackClient:
                 ts=thread_ts,
                 limit=limit,
             )
-            # First message is the parent, rest are replies
             messages = response.get('messages', [])
+            if include_parent:
+                return messages
+            # First message is the parent, rest are replies
             return messages[1:] if len(messages) > 1 else []
         except SlackApiError as e:
             logger.warning(f'Failed to fetch thread {thread_ts}: {e.response["error"]}')
@@ -226,3 +240,35 @@ class SlackClient:
             thread_formatted = thread_ts.replace('.', '')
             base_url += f'?thread_ts={thread_formatted}'
         return base_url
+
+    async def get_message_reactions(
+        self,
+        channel_id: str,
+        message_ts: str,
+        full: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Fetch reactions for a specific message from Slack API.
+
+        Uses reactions.get endpoint for real-time data.
+
+        Args:
+            channel_id: Channel ID containing the message.
+            message_ts: Timestamp of the message.
+            full: If True, return full user list for each reaction.
+
+        Returns:
+            List of reactions, each with 'name', 'users', 'count'.
+        """
+        try:
+            response = await self._execute(
+                'reactions.get',
+                self.client.reactions_get,
+                channel=channel_id,
+                timestamp=message_ts,
+                full=full,
+            )
+            # reactions.get returns message with reactions
+            return response.get('message', {}).get('reactions', [])
+        except SlackApiError as e:
+            logger.warning(f'Failed to get reactions: {e.response["error"]}')
+            return []

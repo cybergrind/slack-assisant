@@ -61,6 +61,7 @@ SLACK_RATE_LIMITS: dict[str, RateLimitConfig] = {
     'search.messages': RateLimitConfig(requests_per_minute=20, burst_size=5),  # Tier 2
     'reminders.list': RateLimitConfig(requests_per_minute=20, burst_size=5),  # Tier 2
     'auth.test': RateLimitConfig(requests_per_minute=100, burst_size=20),  # Tier 4
+    'reactions.get': RateLimitConfig(requests_per_minute=50, burst_size=10),  # Tier 3
 }
 
 

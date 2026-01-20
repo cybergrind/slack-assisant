@@ -549,3 +549,29 @@ class Repository:
             message_keys=message_keys,
             emoji_names=acknowledgment_emojis,
         )
+
+    async def get_reactions_for_messages_batch(
+        self,
+        message_ids: list[int],
+    ) -> dict[int, list[Reaction]]:
+        """Get reactions for multiple messages in one query.
+
+        Args:
+            message_ids: List of message database IDs.
+
+        Returns:
+            Dict mapping message_id to list of Reaction objects.
+        """
+        if not message_ids:
+            return {}
+
+        async with get_session() as session:
+            stmt = select(Reaction).where(Reaction.message_id.in_(message_ids))
+            result = await session.execute(stmt)
+            reactions = result.scalars().all()
+
+            # Group by message_id
+            grouped: dict[int, list[Reaction]] = {mid: [] for mid in message_ids}
+            for reaction in reactions:
+                grouped[reaction.message_id].append(reaction)
+            return grouped

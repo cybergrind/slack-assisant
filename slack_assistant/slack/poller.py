@@ -155,18 +155,23 @@ class SlackPoller:
             await self.repository.upsert_sync_state(SyncState(channel_id=channel.id, last_ts=newest_ts))
 
     async def _sync_thread_replies(self, channel_id: str, thread_ts: str) -> None:
-        """Sync replies in a thread."""
-        replies = await self.client.get_thread_replies(channel_id, thread_ts)
+        """Sync all messages in a thread including the parent.
 
-        for reply_data in replies:
-            reply = Message.from_slack(channel_id, reply_data)
-            message_id = await self.repository.upsert_message(reply)
+        This ensures parent message reactions are captured during thread sync,
+        since conversations.replies returns the parent with up-to-date reactions.
+        """
+        # include_parent=True (default) ensures we get parent with current reactions
+        thread_messages = await self.client.get_thread_replies(channel_id, thread_ts, include_parent=True)
 
-            if reactions := reply_data.get('reactions'):
+        for msg_data in thread_messages:
+            msg = Message.from_slack(channel_id, msg_data)
+            message_id = await self.repository.upsert_message(msg)
+
+            if reactions := msg_data.get('reactions'):
                 await self.repository.upsert_reactions(message_id, reactions)
 
-            if reply.user_id:
-                await self._ensure_user_cached(reply.user_id)
+            if msg.user_id:
+                await self._ensure_user_cached(msg.user_id)
 
     async def _ensure_user_cached(self, user_id: str) -> None:
         """Ensure user info is cached in the database."""

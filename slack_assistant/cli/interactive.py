@@ -1,8 +1,10 @@
 """Interactive console for the status agent."""
 
 import logging
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.markdown import Markdown
@@ -43,7 +45,12 @@ class InteractiveConsole:
         """
         self._agent = agent
         self._running = False
+        # Enable persistent command history
+        history_dir = Path.home() / '.local' / 'slack_assistant'
+        history_dir.mkdir(parents=True, exist_ok=True)
+        history_file = history_dir / 'history'
         self._session = PromptSession(
+            history=FileHistory(str(history_file)),
             key_bindings=_create_key_bindings(),
             multiline=False,  # Enter submits, Ctrl+J adds newline
         )
@@ -88,6 +95,17 @@ class InteractiveConsole:
 **Input:**
 - `Enter` - Send message
 - `Ctrl+J` - Insert newline (for multi-line messages)
+
+**Keyboard Shortcuts (Emacs-style):**
+- `Ctrl+A` - Move to beginning of line
+- `Ctrl+E` - Move to end of line
+- `Ctrl+K` - Kill from cursor to end of line
+- `Ctrl+U` - Kill from beginning to cursor
+- `Ctrl+W` - Kill word backward
+- `Ctrl+Y` - Yank (paste) killed text
+- `Arrow Up` / `Ctrl+P` - Previous command from history
+- `Arrow Down` / `Ctrl+N` - Next command from history
+- `Ctrl+R` - Reverse search history
 
 **Tips:**
 - Ask about specific threads or messages

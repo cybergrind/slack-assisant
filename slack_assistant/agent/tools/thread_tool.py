@@ -1,5 +1,6 @@
 """Thread tool for getting full thread conversations."""
 
+from collections import defaultdict
 from typing import Any
 
 from slack_assistant.agent.tools.base import BaseTool
@@ -23,9 +24,10 @@ class ThreadTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return """Get all messages in a Slack thread.
+        return """Get all messages in a Slack thread with reactions.
 Use this to drill into a specific thread and see the full conversation.
-Accepts either a thread_ts or a Slack message link."""
+Accepts either a thread_ts or a Slack message link.
+Use refresh_reactions=true to fetch live reactions from Slack API."""
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -44,6 +46,10 @@ Accepts either a thread_ts or a Slack message link."""
                     'type': 'string',
                     'description': 'Slack message permalink (alternative to channel_id/thread_ts)',
                 },
+                'refresh_reactions': {
+                    'type': 'boolean',
+                    'description': 'If true, fetch live reactions from Slack API (default: false, uses cached data)',
+                },
             },
             'required': [],
         }
@@ -53,17 +59,19 @@ Accepts either a thread_ts or a Slack message link."""
         channel_id: str | None = None,
         thread_ts: str | None = None,
         message_link: str | None = None,
+        refresh_reactions: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Get thread messages.
+        """Get thread messages with reactions.
 
         Args:
             channel_id: Channel ID.
             thread_ts: Thread timestamp.
             message_link: Alternative: Slack permalink.
+            refresh_reactions: If True, fetch live reactions from Slack API.
 
         Returns:
-            Thread messages as dict.
+            Thread messages with reactions as dict.
         """
         # Parse link if provided
         if message_link and not (channel_id and thread_ts):
@@ -83,6 +91,7 @@ Accepts either a thread_ts or a Slack message link."""
                 'thread_ts': thread_ts,
                 'count': 0,
                 'messages': [],
+                'reactions_source': 'none',
             }
 
         # Collect entities for formatting
@@ -94,10 +103,61 @@ Accepts either a thread_ts or a Slack message link."""
             entities.channel_ids.add(msg.channel_id)
             all_entities.merge(entities)
 
+        # Get reactions - either from database or live API
+        reactions_source = 'database'
+        reactions_by_msg_id: dict[int, dict[str, list[str]]] = {}
+
+        if refresh_reactions:
+            # Fetch live reactions from Slack API and update database
+            reactions_source = 'live_api'
+            for msg in messages:
+                live_reactions = await self._client.get_message_reactions(channel_id, msg.ts)
+                if live_reactions:
+                    # Store in database for future use
+                    await self._repository.upsert_reactions(msg.id, live_reactions)
+                    # Format for output: {emoji: [user1, user2]}
+                    reactions_by_msg_id[msg.id] = self._format_reactions(live_reactions)
+                    # Collect user IDs from reactions for name resolution
+                    for reaction in live_reactions:
+                        for user_id in reaction.get('users', []):
+                            all_entities.user_ids.add(user_id)
+                else:
+                    reactions_by_msg_id[msg.id] = {}
+        else:
+            # Get reactions from database
+            message_ids = [msg.id for msg in messages]
+            db_reactions = await self._repository.get_reactions_for_messages_batch(message_ids)
+            for msg_id, reaction_list in db_reactions.items():
+                grouped: dict[str, list[str]] = defaultdict(list)
+                for reaction in reaction_list:
+                    grouped[reaction.name].append(reaction.user_id)
+                    all_entities.user_ids.add(reaction.user_id)
+                reactions_by_msg_id[msg_id] = dict(grouped)
+
         context = await self._resolver.resolve(all_entities)
 
         # Get channel name
         channel_name = context.channels.get(channel_id, channel_id)
+
+        # Build output with reactions (resolve user IDs to names)
+        formatted_messages = []
+        for msg in messages:
+            msg_reactions = reactions_by_msg_id.get(msg.id, {})
+            # Resolve user IDs to names in reactions
+            formatted_reactions = {
+                emoji: [context.users.get(uid, uid) for uid in user_ids]
+                for emoji, user_ids in msg_reactions.items()
+            }
+
+            formatted_messages.append({
+                'user': context.users.get(msg.user_id, msg.user_id) if msg.user_id else 'unknown',
+                'user_id': msg.user_id,
+                'text': format_text(msg.text, context.users, context.channels) if msg.text else '',
+                'timestamp': msg.created_at.isoformat() if msg.created_at else None,
+                'is_parent': msg.ts == thread_ts,
+                'link': self._client.get_message_link(channel_id, msg.ts, msg.thread_ts),
+                'reactions': formatted_reactions,
+            })
 
         return {
             'channel_id': channel_id,
@@ -105,18 +165,25 @@ Accepts either a thread_ts or a Slack message link."""
             'thread_ts': thread_ts,
             'count': len(messages),
             'link': self._client.get_message_link(channel_id, thread_ts),
-            'messages': [
-                {
-                    'user': context.users.get(msg.user_id, msg.user_id) if msg.user_id else 'unknown',
-                    'user_id': msg.user_id,
-                    'text': format_text(msg.text, context.users, context.channels) if msg.text else '',
-                    'timestamp': msg.created_at.isoformat() if msg.created_at else None,
-                    'is_parent': msg.ts == thread_ts,
-                    'link': self._client.get_message_link(channel_id, msg.ts, msg.thread_ts),
-                }
-                for msg in messages
-            ],
+            'messages': formatted_messages,
+            'reactions_source': reactions_source,
         }
+
+    def _format_reactions(self, reactions: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """Format Slack API reactions to {emoji: [user_ids]} dict.
+
+        Args:
+            reactions: List of reactions from Slack API.
+
+        Returns:
+            Dict mapping emoji name to list of user IDs.
+        """
+        result: dict[str, list[str]] = {}
+        for reaction in reactions:
+            name = reaction.get('name', '')
+            users = reaction.get('users', [])
+            result[name] = users
+        return result
 
     def _parse_link(self, link: str) -> tuple[str, str] | None:
         """Parse a Slack message link to extract channel_id and ts.
