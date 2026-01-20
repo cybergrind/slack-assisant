@@ -88,7 +88,7 @@ class InteractiveConsole:
 - `/quit` or `/exit` - Exit the agent
 - `/clear` - Clear conversation history
 - `/help` - Show this help message
-- `/status` - Get fresh status update
+- `/status` or `/refresh` or `/r` - Get fresh status update
 - `/session` - Show current session info
 - `/new` - Start a new session (archives current one)
 
@@ -139,7 +139,7 @@ class InteractiveConsole:
         elif cmd in ('/help', '/h', '/?'):
             self._print_help()
 
-        elif cmd == '/status':
+        elif cmd in ('/status', '/refresh', '/r'):
             console.print('[dim]Fetching fresh status...[/dim]')
             response = await self._agent.initialize()
             self._print_response(response)

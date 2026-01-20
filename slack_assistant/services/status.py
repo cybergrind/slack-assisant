@@ -131,7 +131,9 @@ class StatusService:
 
         # Collect DMs
         dms = await self.repository.get_dm_messages(since)
-        dms = [m for m in dms if m.user_id != self.client.user_id]
+        # Filter out messages WE sent to others, but keep messages in self-DM channel
+        self_dm_channel_ids = await self.repository.get_self_dm_channel_ids()
+        dms = [m for m in dms if m.user_id != self.client.user_id or m.channel_id in self_dm_channel_ids]
         for msg in dms:
             entities = collect_entities(msg.text)
             if msg.user_id:

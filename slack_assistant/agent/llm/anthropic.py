@@ -57,6 +57,9 @@ class AnthropicClient(BaseLLMClient):
 
         response = await self.client.messages.create(**kwargs)
 
+        # Log token usage concisely
+        logger.info(f'LLM ▸ {response.usage.input_tokens}→{response.usage.output_tokens} tokens')
+
         return self._parse_response(response)
 
     def format_tool_result(self, tool_use_id: str, result: Any, is_error: bool = False) -> dict[str, Any]:

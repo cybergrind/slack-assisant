@@ -42,7 +42,7 @@ class EmbeddingService:
     def _generate_sync(self, text: str) -> list[float]:
         """Synchronous embedding generation."""
         model = _get_model()
-        embedding = model.encode(text, normalize_embeddings=True)
+        embedding = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
         return embedding.tolist()
 
     async def generate_embedding(self, text: str) -> list[float] | None:

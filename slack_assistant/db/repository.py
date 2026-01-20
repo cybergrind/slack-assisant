@@ -27,6 +27,7 @@ class Repository:
                     name=channel.name,
                     channel_type=channel.channel_type,
                     is_archived=channel.is_archived,
+                    is_self_dm=channel.is_self_dm,
                     created_at=channel.created_at,
                 )
                 .values({metadata_col: channel.metadata_})
@@ -37,6 +38,7 @@ class Repository:
                     'name': stmt.excluded.name,
                     'channel_type': stmt.excluded.channel_type,
                     'is_archived': stmt.excluded.is_archived,
+                    'is_self_dm': stmt.excluded.is_self_dm,
                     metadata_col: stmt.excluded.metadata,
                 },
             )
@@ -54,6 +56,13 @@ class Repository:
         async with get_session() as session:
             result = await session.execute(select(Channel).where(Channel.is_archived == False))  # noqa: E712
             return list(result.scalars().all())
+
+    async def get_self_dm_channel_ids(self) -> set[str]:
+        """Get IDs of channels that are DMs to self."""
+        async with get_session() as session:
+            stmt = select(Channel.id).where(Channel.is_self_dm == True)  # noqa: E712
+            result = await session.execute(stmt)
+            return {row[0] for row in result.all()}
 
     # User operations
 

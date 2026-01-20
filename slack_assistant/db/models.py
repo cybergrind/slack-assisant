@@ -22,6 +22,7 @@ class Channel(Base):
     name: Mapped[str | None] = mapped_column(String(255))
     channel_type: Mapped[str] = mapped_column(String(20), nullable=False)  # public_channel, private_channel, mpim, im
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_self_dm: Mapped[bool] = mapped_column(Boolean, default=False)  # True if this is a DM to self
     created_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()

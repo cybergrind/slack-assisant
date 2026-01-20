@@ -12,8 +12,19 @@ from slack_assistant.services.status import StatusService
 
 @pytest.fixture
 def mock_repository():
-    """Create a mock repository."""
-    return MagicMock()
+    """Create a mock repository with common async mocks."""
+    repo = MagicMock()
+    # Set up default empty async mocks for methods called by get_status
+    repo.get_unread_mentions = AsyncMock(return_value=[])
+    repo.get_user_reply_status_batch = AsyncMock(return_value={})
+    repo.get_dm_messages = AsyncMock(return_value=[])
+    repo.get_self_dm_channel_ids = AsyncMock(return_value=set())
+    repo.get_threads_with_replies = AsyncMock(return_value=[])
+    repo.get_pending_reminders = AsyncMock(return_value=[])
+    repo.get_users_batch = AsyncMock(return_value=[])
+    repo.get_channels_batch = AsyncMock(return_value=[])
+    repo.get_user_reactions_on_status_items = AsyncMock(return_value={})
+    return repo
 
 
 @pytest.fixture
@@ -53,6 +64,7 @@ class TestStatusMentionPriority:
             return_value={'C123:1234567890.000000': False}  # User has NOT replied
         )
         mock_repository.get_dm_messages = AsyncMock(return_value=[])
+        mock_repository.get_self_dm_channel_ids = AsyncMock(return_value=set())
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
@@ -85,6 +97,7 @@ class TestStatusMentionPriority:
             return_value={'C123:1234567890.000000': True}  # User HAS replied
         )
         mock_repository.get_dm_messages = AsyncMock(return_value=[])
+        mock_repository.get_self_dm_channel_ids = AsyncMock(return_value=set())
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
@@ -117,6 +130,7 @@ class TestStatusMentionPriority:
             return_value={'C123:1234567890.000001': True}  # User replied to this thread
         )
         mock_repository.get_dm_messages = AsyncMock(return_value=[])
+        mock_repository.get_self_dm_channel_ids = AsyncMock(return_value=set())
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])
@@ -165,6 +179,7 @@ class TestStatusMentionPriority:
             }
         )
         mock_repository.get_dm_messages = AsyncMock(return_value=[])
+        mock_repository.get_self_dm_channel_ids = AsyncMock(return_value=set())
         mock_repository.get_threads_with_replies = AsyncMock(return_value=[])
         mock_repository.get_pending_reminders = AsyncMock(return_value=[])
         mock_repository.get_users_batch = AsyncMock(return_value=[])

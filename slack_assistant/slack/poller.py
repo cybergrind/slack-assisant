@@ -74,16 +74,25 @@ class SlackPoller:
         conversations = await self.client.get_conversations()
 
         for conv in conversations:
+            channel_type = self._get_channel_type(conv)
+
+            # Detect self-DM: IM channel where the other user is self
+            is_self_dm = channel_type == 'im' and conv.get('user') == self.client.user_id
+
             channel = Channel(
                 id=conv['id'],
                 name=conv.get('name') or conv.get('user'),
-                channel_type=self._get_channel_type(conv),
+                channel_type=channel_type,
                 is_archived=conv.get('is_archived', False),
+                is_self_dm=is_self_dm,
                 created_at=datetime.fromtimestamp(conv['created']) if conv.get('created') else None,
                 metadata_={k: v for k, v in conv.items() if k not in ('id', 'name', 'is_archived', 'created')},
             )
             await self.repository.upsert_channel(channel)
             self._channels[channel.id] = conv
+
+            if is_self_dm:
+                logger.debug(f'Detected self-DM channel: {channel.id}')
 
         logger.info(f'Synced {len(conversations)} channels')
 
@@ -113,9 +122,12 @@ class SlackPoller:
         sync_state = await self.repository.get_sync_state(channel.id)
         oldest = sync_state.last_ts if sync_state else None
 
+        logger.debug(f'Syncing {channel.name or channel.id}: oldest={oldest}')
+
         # Fetch new messages
         messages = await self.client.get_channel_history(channel.id, oldest=oldest)
         if not messages:
+            logger.debug(f'No new messages in {channel.name or channel.id}')
             return
 
         # Messages are returned newest-first
