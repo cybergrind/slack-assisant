@@ -106,15 +106,29 @@ class SlackPoller:
             return 'private_channel'
         return 'public_channel'
 
-    async def _sync_all_messages(self) -> None:
-        """Sync messages from all channels.
+    async def _sync_all_messages(self, max_concurrent: int = 10) -> None:
+        """Sync messages from all channels concurrently.
 
-        Rate limiting is handled by the SlackClient, so no manual delays needed.
+        Rate limiting is handled by the SlackClient, so we can safely run
+        multiple channel syncs in parallel.
+
+        Args:
+            max_concurrent: Maximum number of channels to sync concurrently.
         """
         channels = await self.repository.get_all_channels()
 
-        for channel in channels:
-            await self._sync_channel_messages(channel)
+        if not channels:
+            return
+
+        # Use semaphore to limit concurrent channel syncs
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def sync_with_semaphore(channel: Channel) -> None:
+            async with semaphore:
+                await self._sync_channel_messages(channel)
+
+        # Run all channel syncs concurrently (semaphore limits parallelism)
+        await asyncio.gather(*[sync_with_semaphore(ch) for ch in channels], return_exceptions=True)
 
     async def _sync_channel_messages(self, channel: Channel) -> None:
         """Sync messages from a single channel."""
