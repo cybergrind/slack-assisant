@@ -13,6 +13,7 @@ from slack_assistant.agent.prompts import (
     build_system_prompt,
 )
 from slack_assistant.agent.tools import (
+    AnalysisTool,
     ContextTool,
     PreferencesTool,
     SearchTool,
@@ -81,7 +82,10 @@ class AgentController:
 
     def _setup_tools(self) -> None:
         """Register all available tools."""
-        # Status tool
+        # Analysis tool (primary tool for status requests)
+        self._tools.register(AnalysisTool(self._client, self._repository))
+
+        # Status tool (legacy, for backwards compatibility)
         self._tools.register(StatusTool(self._client, self._repository, self._session))
 
         # Search tool

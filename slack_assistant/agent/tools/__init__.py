@@ -1,5 +1,6 @@
 """Agent tools for interacting with Slack data and services."""
 
+from slack_assistant.agent.tools.analysis_tool import AnalysisTool
 from slack_assistant.agent.tools.base import BaseTool, ToolRegistry
 from slack_assistant.agent.tools.context_tool import ContextTool
 from slack_assistant.agent.tools.prefs_tool import PreferencesTool
@@ -10,6 +11,7 @@ from slack_assistant.agent.tools.thread_tool import ThreadTool
 
 
 __all__ = [
+    'AnalysisTool',
     'BaseTool',
     'ContextTool',
     'PreferencesTool',

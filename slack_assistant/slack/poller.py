@@ -51,8 +51,9 @@ class SlackPoller:
         self._running = True
         logger.info(f'Starting poller (interval: {self.poll_interval}s)')
 
-        # Initial sync
-        await self._sync_channels()
+        # Initial sync - fetch metadata and persist to DB
+        await self._refresh_channel_metadata()
+        await self._sync_channels_to_db()
         await self._sync_all_messages()
 
         # Main polling loop
@@ -63,10 +64,15 @@ class SlackPoller:
                 poll_count += 1
                 logger.debug(f'Poll #{poll_count}')
 
-                # Refresh channel list periodically
-                if poll_count % 10 == 0:
-                    await self._sync_channels()
+                # Always refresh metadata (fast, just updates _channels dict)
+                # This ensures smart sync has fresh 'latest' timestamps
+                await self._refresh_channel_metadata()
 
+                # Persist channel changes to DB less frequently
+                if poll_count % 10 == 0:
+                    await self._sync_channels_to_db()
+
+                # Smart sync now uses FRESH metadata
                 await self._sync_all_messages()
 
             except asyncio.CancelledError:
@@ -81,12 +87,26 @@ class SlackPoller:
         self._running = False
         logger.info('Poller stopping...')
 
-    async def _sync_channels(self) -> None:
-        """Sync channel list from Slack."""
-        logger.info('Syncing channels...')
-        conversations = await self.client.get_conversations()
+    async def _refresh_channel_metadata(self) -> None:
+        """Fetch fresh channel metadata from Slack (lightweight, every poll).
 
+        This updates the _channels cache with the latest conversation data
+        including the 'latest' field which contains the most recent message
+        timestamp. This is essential for smart sync to detect new messages.
+        """
+        conversations = await self.client.get_conversations()
         for conv in conversations:
+            self._channels[conv['id']] = conv
+        logger.debug(f'Refreshed metadata for {len(conversations)} channels')
+
+    async def _sync_channels_to_db(self) -> None:
+        """Persist channel changes to database (full sync, less frequent).
+
+        This writes channel information to the database, which is needed for
+        new channels to appear in queries. Run less frequently since channel
+        metadata (name, archived status) changes rarely.
+        """
+        for channel_id, conv in self._channels.items():
             channel_type = self._get_channel_type(conv)
 
             # Detect self-DM: IM channel where the other user is self
@@ -102,12 +122,11 @@ class SlackPoller:
                 metadata_={k: v for k, v in conv.items() if k not in ('id', 'name', 'is_archived', 'created')},
             )
             await self.repository.upsert_channel(channel)
-            self._channels[channel.id] = conv
 
             if is_self_dm:
                 logger.debug(f'Detected self-DM channel: {channel.id}')
 
-        logger.info(f'Synced {len(conversations)} channels')
+        logger.info(f'Synced {len(self._channels)} channels to database')
 
     def _get_channel_type(self, conv: dict[str, Any]) -> str:
         """Determine channel type from conversation data."""

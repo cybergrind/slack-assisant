@@ -87,6 +87,34 @@ class TestConversationManager:
         assert '2 user' in summary
         assert '1 assistant' in summary
 
+    def test_add_assistant_message_empty_content_skipped(self):
+        """Test that assistant messages with no content are skipped.
+
+        Anthropic API requires non-empty content for non-final assistant messages.
+        When the LLM returns neither text nor tool calls, we should skip adding
+        the message to avoid API errors.
+        """
+        manager = ConversationManager()
+        manager.add_user_message('Hello')
+        manager.add_assistant_message(None, None)  # No content, no tool calls
+
+        messages = manager.build_messages()
+        # Only the user message should be present
+        assert len(messages) == 1
+        assert messages[0]['role'] == 'user'
+
+    def test_add_assistant_message_tool_calls_only(self):
+        """Test that assistant messages with only tool calls (no text) work."""
+        manager = ConversationManager()
+        tool_calls = [{'id': 'tc_123', 'name': 'get_status', 'input': {}}]
+        manager.add_assistant_message(None, tool_calls)
+
+        messages = manager.build_messages()
+        assert len(messages) == 1
+        assert messages[0]['role'] == 'assistant'
+        assert len(messages[0]['content']) == 1
+        assert messages[0]['content'][0]['type'] == 'tool_use'
+
 
 class TestLLMModels:
     """Tests for LLM models."""

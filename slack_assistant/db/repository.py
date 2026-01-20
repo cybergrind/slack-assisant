@@ -599,3 +599,96 @@ class Repository:
             for reaction in reactions:
                 grouped[reaction.message_id].append(reaction)
             return grouped
+
+    # Analysis queries
+
+    async def get_recent_messages_for_analysis(
+        self,
+        user_id: str,
+        since: datetime,
+        limit: int = 100,
+        include_own_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Get recent messages for LLM analysis without pre-filtering.
+
+        Unlike get_status which pre-filters by message type and priority,
+        this method returns ALL recent messages with full text for the LLM
+        to analyze and categorize based on content.
+
+        Args:
+            user_id: The current user's ID (to identify own messages).
+            since: Datetime to look back from.
+            limit: Maximum number of messages to return.
+            include_own_messages: Whether to include messages sent by the user.
+
+        Returns:
+            List of message dicts with channel context for LLM analysis.
+        """
+        async with get_session() as session:
+            # Build query joining messages with channels for context
+            stmt = (
+                select(
+                    Message.id,
+                    Message.channel_id,
+                    Message.ts,
+                    Message.user_id,
+                    Message.text,
+                    Message.thread_ts,
+                    Message.reply_count,
+                    Message.created_at,
+                    Channel.name.label('channel_name'),
+                    Channel.channel_type,
+                    Channel.is_self_dm,
+                )
+                .join(Channel, Message.channel_id == Channel.id)
+                .where(
+                    Message.created_at > since,
+                    Channel.is_archived == False,  # noqa: E712
+                )
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+            )
+
+            # Optionally exclude user's own messages
+            if not include_own_messages:
+                stmt = stmt.where(Message.user_id != user_id)
+
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            messages = []
+            for row in rows:
+                # Determine if this is a DM
+                is_dm = row.channel_type == 'im' and not row.is_self_dm
+
+                # Check if user is mentioned
+                is_mention = f'<@{user_id}>' in (row.text or '')
+
+                # Determine metadata-based priority hint
+                if is_mention:
+                    metadata_priority = 'CRITICAL'
+                elif is_dm:
+                    metadata_priority = 'HIGH'
+                elif row.thread_ts:
+                    metadata_priority = 'MEDIUM'
+                else:
+                    metadata_priority = 'LOW'
+
+                messages.append({
+                    'id': f'{row.channel_id}:{row.ts}',
+                    'db_id': row.id,
+                    'channel_id': row.channel_id,
+                    'channel': f'#{row.channel_name}' if row.channel_name else row.channel_id,
+                    'channel_type': row.channel_type,
+                    'user_id': row.user_id,
+                    'is_own_message': row.user_id == user_id,
+                    'is_mention': is_mention,
+                    'is_dm': is_dm,
+                    'is_self_dm': row.is_self_dm,
+                    'text': row.text,
+                    'thread_ts': row.thread_ts,
+                    'timestamp': row.created_at.isoformat() if row.created_at else None,
+                    'metadata_priority': metadata_priority,
+                })
+
+            return messages

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from slack_assistant.preferences import EmojiPattern, PreferenceStorage, UserPreferences
+from slack_assistant.preferences.models import normalize_emoji_name
 
 
 class TestEmojiPattern:
@@ -31,6 +32,41 @@ class TestEmojiPattern:
 
         assert pattern.marks_as_handled is False
         assert pattern.priority_adjustment == 0
+
+
+class TestNormalizeEmojiName:
+    """Tests for emoji name normalization."""
+
+    def test_normalize_hyphens_to_underscores(self):
+        """Test that hyphens are converted to underscores."""
+        assert normalize_emoji_name('pepe-noted') == 'pepe_noted'
+        assert normalize_emoji_name('white-check-mark') == 'white_check_mark'
+
+    def test_normalize_removes_colons(self):
+        """Test that colons are removed."""
+        assert normalize_emoji_name(':eyes:') == 'eyes'
+        assert normalize_emoji_name(':white_check_mark:') == 'white_check_mark'
+
+    def test_normalize_lowercase(self):
+        """Test that names are lowercased."""
+        assert normalize_emoji_name('ThumbsUp') == 'thumbsup'
+        assert normalize_emoji_name('Pepe-Noted') == 'pepe_noted'
+
+    def test_normalize_strips_whitespace(self):
+        """Test that whitespace is stripped."""
+        assert normalize_emoji_name(' eyes ') == 'eyes'
+        assert normalize_emoji_name('  pepe-noted  ') == 'pepe_noted'
+
+    def test_normalize_combined(self):
+        """Test normalization with multiple transformations."""
+        assert normalize_emoji_name(':Pepe-Noted:') == 'pepe_noted'
+        assert normalize_emoji_name(' :White-Check-Mark: ') == 'white_check_mark'
+
+    def test_normalize_already_normalized(self):
+        """Test that already normalized names are unchanged."""
+        assert normalize_emoji_name('eyes') == 'eyes'
+        assert normalize_emoji_name('white_check_mark') == 'white_check_mark'
+        assert normalize_emoji_name('pepe_noted') == 'pepe_noted'
 
 
 class TestUserPreferencesEmojiPatterns:
@@ -87,6 +123,28 @@ class TestUserPreferencesEmojiPatterns:
 
         not_found = prefs.get_emoji_pattern('nonexistent')
         assert not_found is None
+
+    def test_get_emoji_pattern_normalizes_lookup(self):
+        """Test that emoji pattern lookup normalizes the search key."""
+        # Pattern stored with normalized name (underscores)
+        pattern = EmojiPattern(emoji='pepe_noted', meaning='acknowledged')
+        prefs = UserPreferences(emoji_patterns=[pattern])
+
+        # Should find with various input formats
+        assert prefs.get_emoji_pattern('pepe_noted') is not None
+        assert prefs.get_emoji_pattern('pepe-noted') is not None
+        assert prefs.get_emoji_pattern(':pepe_noted:') is not None
+        assert prefs.get_emoji_pattern(':pepe-noted:') is not None
+        assert prefs.get_emoji_pattern('Pepe-Noted') is not None
+
+    def test_get_emoji_pattern_with_colons(self):
+        """Test that colons are stripped during lookup."""
+        pattern = EmojiPattern(emoji='white_check_mark', meaning='done')
+        prefs = UserPreferences(emoji_patterns=[pattern])
+
+        found = prefs.get_emoji_pattern(':white_check_mark:')
+        assert found is not None
+        assert found.emoji == 'white_check_mark'
 
 
 class TestPreferenceStorageEmojiPatterns:

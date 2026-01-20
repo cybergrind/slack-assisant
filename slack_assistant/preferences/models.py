@@ -6,6 +6,28 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+def normalize_emoji_name(name: str) -> str:
+    """Normalize emoji name to Slack format (lowercase, underscores, no colons).
+
+    Slack API returns emoji names with underscores (e.g., 'white_check_mark'),
+    but users may type hyphens, colons, or mixed case. This function normalizes
+    to Slack's format for consistent matching.
+
+    Examples:
+        "pepe-noted" → "pepe_noted"
+        ":white_check_mark:" → "white_check_mark"
+        "Thumbs-Up" → "thumbs_up"
+        "eyes" → "eyes"
+
+    Args:
+        name: Emoji name in any format.
+
+    Returns:
+        Normalized emoji name (lowercase, underscores, no colons).
+    """
+    return name.lower().replace('-', '_').replace(':', '').strip()
+
+
 class UserRule(BaseModel):
     """A user-defined prioritization rule."""
 
@@ -82,13 +104,16 @@ class UserPreferences(BaseModel):
     def get_emoji_pattern(self, emoji: str) -> EmojiPattern | None:
         """Get emoji pattern by emoji name.
 
+        The lookup is normalized to handle different formats (hyphens, colons, case).
+
         Args:
-            emoji: Emoji name (without colons).
+            emoji: Emoji name in any format (e.g., "pepe-noted", ":eyes:").
 
         Returns:
             EmojiPattern or None if not found.
         """
+        normalized = normalize_emoji_name(emoji)
         for pattern in self.emoji_patterns:
-            if pattern.emoji == emoji:
+            if pattern.emoji == normalized:
                 return pattern
         return None

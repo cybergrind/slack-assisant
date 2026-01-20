@@ -53,11 +53,12 @@ class ConversationManager:
 
         if content_blocks:
             message['content'] = content_blocks
+            self.messages.append(message)
+            self._trim_if_needed()
         else:
-            message['content'] = []
-
-        self.messages.append(message)
-        self._trim_if_needed()
+            # Anthropic API requires non-empty content for non-final assistant messages.
+            # Skip adding this message if there's no content.
+            logger.debug('Skipping assistant message with no content')
 
     def add_tool_result(self, tool_use_id: str, result: Any, is_error: bool = False) -> None:
         """Add a tool result to the conversation.

@@ -4,6 +4,7 @@ from typing import Any
 
 from slack_assistant.agent.tools.base import BaseTool
 from slack_assistant.preferences import EmojiPattern, PreferenceStorage, UserFact, UserRule
+from slack_assistant.preferences.models import normalize_emoji_name
 
 
 class PreferencesTool(BaseTool):
@@ -167,8 +168,11 @@ Use this to:
             if not meaning:
                 return {'error': 'meaning is required for add_emoji_pattern'}
 
-            # Check if pattern already exists
-            existing = prefs.get_emoji_pattern(emoji)
+            # Normalize emoji name to Slack format (underscores, lowercase, no colons)
+            normalized_emoji = normalize_emoji_name(emoji)
+
+            # Check if pattern already exists (using normalized name)
+            existing = prefs.get_emoji_pattern(normalized_emoji)
             if existing:
                 # Update existing pattern
                 existing.meaning = meaning
@@ -187,9 +191,9 @@ Use this to:
                     },
                 }
 
-            # Create new pattern
+            # Create new pattern with normalized emoji name
             pattern = EmojiPattern(
-                emoji=emoji,
+                emoji=normalized_emoji,
                 meaning=meaning,
                 marks_as_handled=marks_as_handled,
                 priority_adjustment=max(-2, min(2, priority_adjustment)),
