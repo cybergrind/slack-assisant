@@ -36,6 +36,14 @@ class Config:
         default_factory=lambda: int(os.environ.get('RATE_LIMIT_RETRY_ATTEMPTS', '3'))
     )
 
+    # LLM Provider
+    llm_provider: str = field(default_factory=lambda: os.environ.get('LLM_PROVIDER', 'anthropic'))
+    llm_model: str = field(default_factory=lambda: os.environ.get('LLM_MODEL', 'claude-sonnet-4-20250514'))
+
+    # API Keys
+    anthropic_api_key: str = field(default_factory=lambda: os.environ.get('ANTHROPIC_API_KEY', ''))
+    openai_api_key: str = field(default_factory=lambda: os.environ.get('OPENAI_API_KEY', ''))
+
     def validate(self) -> list[str]:
         """Validate configuration and return list of errors."""
         errors = []

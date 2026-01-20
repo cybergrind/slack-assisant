@@ -331,6 +331,50 @@ def search(query: str, limit: int, use_slack_api: bool):
     run_async(run_search())
 
 
+@cli.command('status-agent')
+def status_agent():
+    """Start interactive status agent."""
+    config = get_config()
+    errors = config.validate()
+    if errors:
+        for error in errors:
+            click.echo(f'Config error: {error}', err=True)
+        sys.exit(1)
+
+    if not config.anthropic_api_key and config.llm_provider == 'anthropic':
+        click.echo('ANTHROPIC_API_KEY is required for the status agent', err=True)
+        sys.exit(1)
+
+    async def run_agent():
+        from slack_assistant.agent import AgentController
+        from slack_assistant.cli.interactive import run_interactive
+        from slack_assistant.services.embeddings import EmbeddingService
+
+        client = SlackClient(config.slack_user_token)
+        repository = Repository()
+
+        try:
+            await get_pool()
+
+            if not await client.authenticate():
+                click.echo('Failed to authenticate with Slack', err=True)
+                sys.exit(1)
+
+            embedding_service = EmbeddingService(repository)
+            agent = AgentController(
+                client=client,
+                repository=repository,
+                embedding_service=embedding_service,
+            )
+
+            await run_interactive(agent)
+
+        finally:
+            await close_pool()
+
+    run_async(run_agent())
+
+
 @cli.command()
 @click.argument('message_link')
 @click.option('--limit', default=10, help='Maximum number of related messages (default: 10)')
