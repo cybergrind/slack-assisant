@@ -101,6 +101,11 @@ class SearchService:
             logger.warning('Could not generate query embedding')
             return []
 
+        # Convert embedding list to string format for pgvector
+        # Using CAST(:embedding AS vector) instead of :embedding::vector to avoid
+        # SQLAlchemy's parameter binding conflict with PostgreSQL's :: cast syntax
+        embedding_str = '[' + ','.join(str(x) for x in query_embedding) + ']'
+
         async with get_session() as session:
             # Use cosine similarity for vector search
             # Note: Using raw SQL for vector operations as SQLAlchemy ORM doesn't natively support pgvector operators
@@ -110,15 +115,15 @@ class SearchService:
                     m.reply_count, m.is_edited, m.message_type, m.created_at, m.updated_at, m.metadata,
                     c.name as channel_name,
                     u.display_name as user_name,
-                    1 - (me.embedding <=> :embedding::vector) as similarity
+                    1 - (me.embedding <=> CAST(:embedding AS vector)) as similarity
                 FROM message_embeddings me
                 JOIN messages m ON me.message_id = m.id
                 LEFT JOIN channels c ON m.channel_id = c.id
                 LEFT JOIN users u ON m.user_id = u.id
-                ORDER BY me.embedding <=> :embedding::vector
+                ORDER BY me.embedding <=> CAST(:embedding AS vector)
                 LIMIT :limit
             """)
-            result = await session.execute(stmt, {'embedding': query_embedding, 'limit': limit})
+            result = await session.execute(stmt, {'embedding': embedding_str, 'limit': limit})
             rows = result.fetchall()
 
         results = []

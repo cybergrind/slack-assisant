@@ -1,5 +1,6 @@
 """Embedding generation service for vector search."""
 
+import asyncio
 import logging
 from typing import Any
 
@@ -14,6 +15,21 @@ from slack_assistant.db.repository import Repository
 
 logger = logging.getLogger(__name__)
 
+# Lazy-loaded model instance
+_model = None
+
+
+def _get_model():
+    """Lazy-load the sentence-transformers model."""
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+
+        model_name = get_config().embedding_model
+        logger.info(f'Loading embedding model: {model_name}')
+        _model = SentenceTransformer(model_name)
+    return _model
+
 
 class EmbeddingService:
     """Service for generating and storing message embeddings."""
@@ -23,29 +39,24 @@ class EmbeddingService:
         self.api_key = api_key
         self.model = get_config().embedding_model
 
-    async def generate_embedding(self, text: str) -> list[float] | None:
-        """Generate embedding for text using configured model.
+    def _generate_sync(self, text: str) -> list[float]:
+        """Synchronous embedding generation."""
+        model = _get_model()
+        embedding = model.encode(text, normalize_embeddings=True)
+        return embedding.tolist()
 
-        This is a placeholder that returns None.
-        In production, you would integrate with:
-        - OpenAI's text-embedding-ada-002
-        - Local models like sentence-transformers
-        - Anthropic's embeddings (when available)
-        """
+    async def generate_embedding(self, text: str) -> list[float] | None:
+        """Generate embedding for text using sentence-transformers."""
         if not text or not text.strip():
             return None
 
-        # TODO: Implement actual embedding generation
-        # Example with OpenAI:
-        # import openai
-        # response = await openai.Embedding.acreate(
-        #     input=text,
-        #     model=self.model
-        # )
-        # return response['data'][0]['embedding']
-
-        logger.warning('Embedding generation not implemented - returning None')
-        return None
+        try:
+            # Run synchronous model in thread pool
+            embedding = await asyncio.to_thread(self._generate_sync, text)
+            return embedding
+        except Exception as e:
+            logger.error(f'Failed to generate embedding: {e}')
+            return None
 
     async def embed_message(self, message_id: int, text: str) -> bool:
         """Generate and store embedding for a message."""

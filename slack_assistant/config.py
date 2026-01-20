@@ -22,8 +22,8 @@ class Config:
     # Polling
     poll_interval_seconds: int = field(default_factory=lambda: int(os.environ.get('POLL_INTERVAL_SECONDS', '60')))
 
-    # Embeddings (for future use)
-    embedding_model: str = field(default_factory=lambda: os.environ.get('EMBEDDING_MODEL', 'text-embedding-ada-002'))
+    # Embeddings
+    embedding_model: str = field(default_factory=lambda: os.environ.get('EMBEDDING_MODEL', 'all-MiniLM-L6-v2'))
 
     # Rate Limiting
     rate_limit_enabled: bool = field(

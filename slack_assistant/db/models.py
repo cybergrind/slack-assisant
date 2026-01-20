@@ -149,7 +149,7 @@ class MessageEmbedding(Base):
     message_id: Mapped[int] = mapped_column(
         Integer, ForeignKey('messages.id', ondelete='CASCADE'), unique=True, nullable=False
     )
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))  # OpenAI ada-002 dimension
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(384))  # all-MiniLM-L6-v2 dimension
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
