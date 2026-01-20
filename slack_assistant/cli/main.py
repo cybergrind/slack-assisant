@@ -11,7 +11,8 @@ import click
 from slack_assistant.config import get_config
 from slack_assistant.db.connection import close_pool, get_pool
 from slack_assistant.db.repository import Repository
-from slack_assistant.services.status import Priority, StatusService
+from slack_assistant.formatting.models import Priority
+from slack_assistant.services.status import StatusService
 from slack_assistant.slack.client import SlackClient
 from slack_assistant.slack.poller import SlackPoller
 
@@ -162,12 +163,13 @@ def _print_status(status):
 
 def _print_status_item(item, color):
     """Print a single status item."""
-    channel = f'#{item.channel_name}' if item.channel_name else item.channel_id
-    user = item.user_name or item.user_id or 'unknown'
+    # Use computed fields from FormattedStatusItem
+    channel = item.formatted_channel
+    user = item.formatted_user
     time_str = item.timestamp.strftime('%m/%d %H:%M') if item.timestamp else ''
 
     click.echo(f'  {click.style(channel, fg=color)} - {user} ({time_str})')
-    click.echo(f'    {item.text_preview}')
+    click.echo(f'    {item.text_preview}')  # Uses computed field with formatting
     click.echo(click.style(f'    {item.link}', dim=True))
     click.echo()
 

@@ -267,6 +267,38 @@ class Repository:
             )
             return list(result.scalars().all())
 
+    # Batch operations
+
+    async def get_users_batch(self, user_ids: list[str]) -> list[User]:
+        """Get multiple users by IDs in a single query.
+
+        Args:
+            user_ids: List of Slack user IDs.
+
+        Returns:
+            List of User objects found in database.
+        """
+        if not user_ids:
+            return []
+        async with get_session() as session:
+            result = await session.execute(select(User).where(User.id.in_(user_ids)))
+            return list(result.scalars().all())
+
+    async def get_channels_batch(self, channel_ids: list[str]) -> list[Channel]:
+        """Get multiple channels by IDs in a single query.
+
+        Args:
+            channel_ids: List of Slack channel IDs.
+
+        Returns:
+            List of Channel objects found in database.
+        """
+        if not channel_ids:
+            return []
+        async with get_session() as session:
+            result = await session.execute(select(Channel).where(Channel.id.in_(channel_ids)))
+            return list(result.scalars().all())
+
     # Status queries
 
     async def get_unread_mentions(self, user_id: str, since: datetime | None = None) -> list[Message]:
