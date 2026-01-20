@@ -63,6 +63,16 @@ class StatusService:
 
         # Collect mentions
         mentions = await self.repository.get_unread_mentions(self.client.user_id, since)
+
+        # Check which mentions the user has already replied to
+        mention_contexts = [
+            (msg.channel_id, msg.thread_ts, msg.ts)
+            for msg in mentions
+        ]
+        reply_status = await self.repository.get_user_reply_status_batch(
+            self.client.user_id, mention_contexts
+        )
+
         for msg in mentions:
             entities = collect_entities(msg.text)
             if msg.user_id:
@@ -70,16 +80,28 @@ class StatusService:
             entities.channel_ids.add(msg.channel_id)
             all_entities.merge(entities)
 
+            # Check if user already replied in this thread
+            effective_thread_ts = msg.thread_ts or msg.ts
+            context_key = f'{msg.channel_id}:{effective_thread_ts}'
+            has_replied = reply_status.get(context_key, False)
+
+            if has_replied:
+                priority = Priority.LOW
+                reason = 'You were mentioned (already replied)'
+            else:
+                priority = Priority.CRITICAL
+                reason = 'You were mentioned'
+
             raw_items.append(
                 {
-                    'priority': Priority.CRITICAL,
+                    'priority': priority,
                     'channel_id': msg.channel_id,
                     'message_ts': msg.ts,
                     'thread_ts': msg.thread_ts,
                     'user_id': msg.user_id,
                     'text': msg.text or '',
                     'timestamp': msg.created_at,
-                    'reason': 'You were mentioned',
+                    'reason': reason,
                 }
             )
 

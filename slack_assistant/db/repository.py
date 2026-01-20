@@ -388,3 +388,50 @@ class Repository:
             # Sort by created_at and limit
             results.sort(key=lambda x: x.get('created_at') or datetime.min, reverse=True)
             return results[:100]
+
+    async def get_user_reply_status_batch(
+        self,
+        user_id: str,
+        mention_contexts: list[tuple[str, str | None, str]],
+    ) -> dict[str, bool]:
+        """Check if user replied in each thread after the mention.
+
+        Args:
+            user_id: The user ID to check for replies.
+            mention_contexts: List of (channel_id, thread_ts, mention_ts) tuples.
+                thread_ts may be None for top-level messages.
+
+        Returns:
+            Dict mapping context key "channel_id:effective_thread_ts" to bool
+            indicating whether user has replied after the mention timestamp.
+        """
+        if not mention_contexts:
+            return {}
+
+        result: dict[str, bool] = {}
+
+        async with get_session() as session:
+            for channel_id, thread_ts, mention_ts in mention_contexts:
+                # For threads, effective_thread_ts is thread_ts
+                # For top-level messages that might start threads, use mention_ts as thread root
+                effective_thread_ts = thread_ts or mention_ts
+                context_key = f'{channel_id}:{effective_thread_ts}'
+
+                # Check if user has any message in this thread after the mention
+                stmt = (
+                    select(Message.id)
+                    .where(
+                        Message.channel_id == channel_id,
+                        Message.user_id == user_id,
+                        Message.ts > mention_ts,
+                        # Match messages in the same thread
+                        (Message.thread_ts == effective_thread_ts) | (Message.ts == effective_thread_ts),
+                    )
+                    .limit(1)
+                )
+
+                reply_result = await session.execute(stmt)
+                has_replied = reply_result.scalar_one_or_none() is not None
+                result[context_key] = has_replied
+
+        return result
