@@ -273,18 +273,24 @@ class SlackPoller:
 
         return 10
 
+    async def _get_channel_display_name(self, channel: Channel) -> str:
+        """Get human-readable display name for a channel."""
+        return await self.repository.get_channel_display_name(channel)
+
     async def _sync_channel_messages(self, channel: Channel) -> None:
         """Sync messages from a single channel."""
         # Get sync state
         sync_state = await self.repository.get_sync_state(channel.id)
         oldest = sync_state.last_ts if sync_state else None
 
-        logger.debug(f'Syncing {channel.name or channel.id}: oldest={oldest}')
+        # Get human-readable channel name
+        display_name = await self._get_channel_display_name(channel)
+        logger.debug(f'Syncing {display_name}: oldest={oldest}')
 
         # Fetch new messages
         messages = await self.client.get_channel_history(channel.id, oldest=oldest)
         if not messages:
-            logger.debug(f'No new messages in {channel.name or channel.id}')
+            logger.debug(f'No new messages in {display_name}')
             return
 
         # Messages are returned newest-first
@@ -317,7 +323,7 @@ class SlackPoller:
                 await self._ensure_user_cached(msg.user_id)
 
         if new_count > 0:
-            logger.info(f'Synced {new_count} new messages from #{channel.name or channel.id}')
+            logger.info(f'Synced {new_count} new messages from {display_name}')
 
         # Update sync state
         if newest_ts:

@@ -1,7 +1,7 @@
 """SQLAlchemy ORM models for Slack Assistant."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, func, text as sa_text
@@ -32,6 +32,32 @@ class Channel(Base):
     messages: Mapped[list['Message']] = relationship(back_populates='channel')
     sync_state: Mapped['SyncState | None'] = relationship(back_populates='channel', uselist=False)
 
+    def get_display_name(self, user_resolver: Callable[[str], str] | None = None) -> str:
+        """Get formatted display name based on channel type.
+
+        Args:
+            user_resolver: Optional function to resolve user IDs to names.
+                          Required for proper IM channel formatting.
+
+        Returns:
+            Formatted channel name:
+            - IM channels: "DM: @username" (if user_resolver provided)
+            - MPIM channels: "Group DM: channel_name"
+            - Regular channels: "#channel_name"
+        """
+        if self.channel_type == 'im':
+            user_id = self.name
+            if user_id and user_resolver:
+                user_name = user_resolver(user_id)
+                return f'DM: @{user_name}'
+            return f'DM: {user_id or self.id}'
+
+        elif self.channel_type == 'mpim':
+            return f'Group DM: {self.name or self.id}'
+
+        else:  # public_channel or private_channel
+            return f'#{self.name or self.id}'
+
 
 class User(Base):
     """Slack user cache."""
@@ -47,6 +73,14 @@ class User(Base):
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     metadata_: Mapped[dict] = mapped_column('metadata', JSONB, default=dict)
+
+    @property
+    def display_name_or_fallback(self) -> str:
+        """Get best available display name.
+
+        Priority: display_name > real_name > name > id
+        """
+        return self.display_name or self.real_name or self.name or self.id
 
 
 class Message(Base):

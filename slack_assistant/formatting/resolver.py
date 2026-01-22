@@ -83,7 +83,7 @@ class EntityResolver:
         if uncached_user_ids:
             db_users = await self.repository.get_users_batch(uncached_user_ids)
             for user in db_users:
-                name = user.display_name or user.real_name or user.name or user.id
+                name = user.display_name_or_fallback
                 users[user.id] = name
                 self._user_cache[user.id] = _CacheEntry(
                     value=name,

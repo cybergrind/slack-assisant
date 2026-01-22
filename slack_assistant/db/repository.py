@@ -323,6 +323,28 @@ class Repository:
             result = await session.execute(select(Channel).where(Channel.id.in_(channel_ids)))
             return list(result.scalars().all())
 
+    async def get_channel_display_name(self, channel: Channel) -> str:
+        """Get human-readable display name for a channel.
+
+        Resolves user names for IM channels by looking up the user.
+
+        Args:
+            channel: The Channel object to get display name for.
+
+        Returns:
+            Formatted channel name:
+            - IM channels: "DM: @username" (with resolved user name)
+            - MPIM channels: "Group DM: channel_name"
+            - Regular channels: "#channel_name"
+        """
+        if channel.channel_type == 'im' and channel.name:
+            user = await self.get_user(channel.name)
+            if user:
+                user_name = user.display_name_or_fallback
+                return f'DM: @{user_name}'
+
+        return channel.get_display_name()
+
     # Status queries
 
     async def get_unread_mentions(self, user_id: str, since: datetime | None = None) -> list[Message]:
