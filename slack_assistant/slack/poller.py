@@ -231,13 +231,14 @@ class SlackPoller:
         Returns:
             True if channel needs syncing.
         """
-        # No sync state = never synced, needs sync
+        # No sync state = never synced, needs sync (even if channel is empty)
         if sync_state is None or sync_state.last_ts is None:
             return True
 
-        # No latest message info = can't determine, assume needs sync
+        # No latest message = empty channel
+        # If we've already synced this empty channel, skip it
         if latest_ts is None:
-            return True
+            return False
 
         # Compare timestamps (Slack ts format: "1234567890.123456")
         return latest_ts > sync_state.last_ts

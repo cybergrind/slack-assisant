@@ -229,3 +229,79 @@ class TestGetChannelDisplayName:
 
         # Verify
         assert result == '#C123456'
+
+
+class TestChannelHasNewMessages:
+    """Tests for the _channel_has_new_messages method."""
+
+    @pytest.fixture
+    def mock_slack_client(self):
+        """Create a mock Slack client."""
+        client = AsyncMock(spec=SlackClient)
+        client.user_id = 'U123456'
+        return client
+
+    @pytest.fixture
+    def mock_repository(self):
+        """Create a mock repository."""
+        return AsyncMock(spec=Repository)
+
+    @pytest.fixture
+    def poller(self, mock_slack_client, mock_repository):
+        """Create a SlackPoller instance with mocked dependencies."""
+        return SlackPoller(
+            client=mock_slack_client,
+            repository=mock_repository,
+            poll_interval=60,
+        )
+
+    def test_never_synced_channel_needs_sync(self, poller):
+        """Test that a channel with no sync state needs syncing."""
+        from slack_assistant.db.models import SyncState
+
+        # No sync state at all
+        assert poller._channel_has_new_messages(None, '1234567890.123456') is True
+
+        # Sync state exists but last_ts is None
+        sync_state = SyncState(channel_id='C123', last_ts=None)
+        assert poller._channel_has_new_messages(sync_state, '1234567890.123456') is True
+
+    def test_empty_channel_never_synced_needs_sync(self, poller):
+        """Test that an empty channel (no messages) needs syncing once."""
+        # Empty channel (latest_ts is None) but never synced
+        assert poller._channel_has_new_messages(None, None) is True
+
+    def test_empty_channel_already_synced_skips_sync(self, poller):
+        """Test that an empty channel that was already synced is skipped."""
+        from slack_assistant.db.models import SyncState
+
+        # Empty channel (latest_ts is None) but we already synced it
+        sync_state = SyncState(channel_id='C123', last_ts='0')
+        assert poller._channel_has_new_messages(sync_state, None) is False
+
+    def test_channel_with_new_messages_needs_sync(self, poller):
+        """Test that a channel with newer messages needs syncing."""
+        from slack_assistant.db.models import SyncState
+
+        sync_state = SyncState(channel_id='C123', last_ts='1234567890.123456')
+        newer_ts = '1234567891.000000'
+
+        assert poller._channel_has_new_messages(sync_state, newer_ts) is True
+
+    def test_channel_with_no_new_messages_skips_sync(self, poller):
+        """Test that a channel with no new messages is skipped."""
+        from slack_assistant.db.models import SyncState
+
+        sync_state = SyncState(channel_id='C123', last_ts='1234567890.123456')
+        same_ts = '1234567890.123456'
+
+        assert poller._channel_has_new_messages(sync_state, same_ts) is False
+
+    def test_channel_with_older_messages_skips_sync(self, poller):
+        """Test that a channel with older messages is skipped."""
+        from slack_assistant.db.models import SyncState
+
+        sync_state = SyncState(channel_id='C123', last_ts='1234567890.123456')
+        older_ts = '1234567889.000000'
+
+        assert poller._channel_has_new_messages(sync_state, older_ts) is False
