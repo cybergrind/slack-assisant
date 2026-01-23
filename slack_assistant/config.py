@@ -15,7 +15,7 @@ class Config:
     # Database
     database_url: str = field(
         default_factory=lambda: os.environ.get(
-            'DATABASE_URL', 'postgresql://slack_assistant:slack_assistant@localhost:5432/slack_assistant'
+            'DATABASE_URL', 'postgresql://slack_assistant:slack_assistant@localhost:5442/slack_assistant'
         )
     )
 

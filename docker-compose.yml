@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: slack_assistant
       POSTGRES_DB: slack_assistant
     ports:
-      - "5432:5432"
+      - "5442:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Schema is now managed by Alembic migrations (run: alembic upgrade head)
