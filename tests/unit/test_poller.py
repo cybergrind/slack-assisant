@@ -305,3 +305,82 @@ class TestChannelHasNewMessages:
         older_ts = '1234567889.000000'
 
         assert poller._channel_has_new_messages(sync_state, older_ts) is False
+
+
+class TestSyncStatePeristence:
+    """Tests for sync state persistence in _sync_channel_messages."""
+
+    @pytest.fixture
+    def mock_slack_client(self):
+        """Create a mock Slack client."""
+        client = AsyncMock(spec=SlackClient)
+        client.user_id = 'U123456'
+        return client
+
+    @pytest.fixture
+    def mock_repository(self):
+        """Create a mock repository."""
+        return AsyncMock(spec=Repository)
+
+    @pytest.fixture
+    def poller(self, mock_slack_client, mock_repository):
+        """Create a SlackPoller instance with mocked dependencies."""
+        return SlackPoller(
+            client=mock_slack_client,
+            repository=mock_repository,
+            poll_interval=60,
+        )
+
+    async def test_sync_state_updated_when_no_messages(self, poller, mock_repository):
+        """Test that sync state is persisted even when channel has no new messages."""
+        from slack_assistant.db.models import Channel, SyncState
+
+        channel = Channel(id='C123', name='test', channel_type='public_channel')
+
+        # Mock: No existing sync state
+        mock_repository.get_sync_state = AsyncMock(return_value=None)
+
+        # Mock: Channel history returns empty list
+        poller.client.get_channel_history = AsyncMock(return_value=[])
+
+        # Mock: upsert_sync_state
+        mock_repository.upsert_sync_state = AsyncMock()
+
+        # Mock: get_channel_display_name
+        mock_repository.get_channel_display_name = AsyncMock(return_value='#test')
+
+        # Execute
+        await poller._sync_channel_messages(channel)
+
+        # Verify: upsert_sync_state was called with last_ts='0'
+        mock_repository.upsert_sync_state.assert_called_once()
+        call_args = mock_repository.upsert_sync_state.call_args[0][0]
+        assert call_args.channel_id == 'C123'
+        assert call_args.last_ts == '0'
+
+    async def test_sync_state_preserved_when_no_new_messages(self, poller, mock_repository):
+        """Test that existing last_ts is preserved when no new messages."""
+        from slack_assistant.db.models import Channel, SyncState
+
+        channel = Channel(id='C123', name='test', channel_type='public_channel')
+
+        # Mock: Existing sync state with last_ts
+        existing_sync = SyncState(channel_id='C123', last_ts='1234567890.123456')
+        mock_repository.get_sync_state = AsyncMock(return_value=existing_sync)
+
+        # Mock: No new messages
+        poller.client.get_channel_history = AsyncMock(return_value=[])
+
+        # Mock: upsert_sync_state
+        mock_repository.upsert_sync_state = AsyncMock()
+
+        # Mock: get_channel_display_name
+        mock_repository.get_channel_display_name = AsyncMock(return_value='#test')
+
+        # Execute
+        await poller._sync_channel_messages(channel)
+
+        # Verify: last_ts is preserved
+        mock_repository.upsert_sync_state.assert_called_once()
+        call_args = mock_repository.upsert_sync_state.call_args[0][0]
+        assert call_args.last_ts == '1234567890.123456'

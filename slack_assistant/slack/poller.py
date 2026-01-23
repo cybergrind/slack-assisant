@@ -292,6 +292,12 @@ class SlackPoller:
         messages = await self.client.get_channel_history(channel.id, oldest=oldest)
         if not messages:
             logger.debug(f'No new messages in {display_name}')
+            # Update sync state to prevent re-syncing on next poll
+            # Use existing last_ts or '0' for never-synced channels
+            last_ts = sync_state.last_ts if sync_state else '0'
+            await self.repository.upsert_sync_state(
+                SyncState(channel_id=channel.id, last_ts=last_ts)
+            )
             return
 
         # Messages are returned newest-first
