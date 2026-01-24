@@ -44,6 +44,17 @@ class Config:
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get('ANTHROPIC_API_KEY', ''))
     openai_api_key: str = field(default_factory=lambda: os.environ.get('OPENAI_API_KEY', ''))
 
+    # Context Summarization (for status-agent-limited)
+    context_max_recent_turns: int = field(
+        default_factory=lambda: int(os.environ.get('CONTEXT_MAX_RECENT_TURNS', '4'))
+    )
+    context_max_summary_tokens: int = field(
+        default_factory=lambda: int(os.environ.get('CONTEXT_MAX_SUMMARY_TOKENS', '1000'))
+    )
+    context_summarize_threshold: int = field(
+        default_factory=lambda: int(os.environ.get('CONTEXT_SUMMARIZE_THRESHOLD', '6'))
+    )
+
     def validate(self) -> list[str]:
         """Validate configuration and return list of errors."""
         errors = []
